@@ -1,8 +1,8 @@
 // Adaptive Local Tonemapper for ReShade
 // Author: CR
 // Credits: 
-//    100% of code written by: ChatGPT 4o and Claude 3.5 
-//    Adaptation Code from luluco250's AdaptiveTonemapper.fx
+//     100% of code written by: ChatGPT 4o and Claude 3.5 
+//     Adaptation Code from luluco250's AdaptiveTonemapper.fx
 
 #include "ReShade.fxh"
 #include "ReShadeUI.fxh"
@@ -58,9 +58,9 @@ uniform float LocalContrastAdaptation <
     ui_tooltip = "Enhances contrast in local areas. Higher values make details pop more.";
     ui_category = "Local Adjustments";
     ui_min = 0.0;
-    ui_max = 0.5;
-    ui_step = 0.001;
-> = 0.1;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.2;
 
 // Color
 uniform float LocalSaturationBoost <
@@ -80,7 +80,7 @@ uniform float Brightness <
     ui_tooltip = "Adjusts the overall brightness of the final image. Use this for fine-tuning after other adjustments.";
     ui_category = "Final Adjustments";
     ui_min = 0.5;
-    ui_max = 1.5;
+    ui_max = 2.0;
     ui_step = 0.01;
 > = 1.0;
 
@@ -89,7 +89,7 @@ uniform float Gamma <
     ui_label = "Final Gamma";
     ui_tooltip = "Adjusts the gamma curve of the final image. Lower values brighten shadows, higher values darken midtones.";
     ui_category = "Final Adjustments";
-    ui_min = 0.8;
+    ui_min = 0.1;
     ui_max = 2.2;
     ui_step = 0.01;
 > = 1.0;
@@ -225,11 +225,17 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float adaptationFactor = max(adaptedLuminance, 0.001);
     float3 adaptedColor = color / adaptationFactor;
 
+    // Apply local adaptation
     float localAdaptation = lerp(1.0, localLuminance / adaptationFactor, LocalAdaptationStrength);
     adaptedColor *= localAdaptation;
 
+    // Apply local contrast
+    float contrastAdaptation = 1.0 + (LocalContrastAdaptation * (1.0 - localLuminance / adaptationFactor));
+    adaptedColor *= contrastAdaptation;
+
     float3 toneMapped = (adaptedColor * (A * adaptedColor + B)) / (adaptedColor * (C * adaptedColor + D) + E);
     
+    // Apply local saturation boost
     float3 saturationBoost = lerp(dot(toneMapped, float3(0.2126, 0.7152, 0.0722)), toneMapped, 1.0 + LocalSaturationBoost * (1.0 - localLuminance / adaptationFactor));
     
     return saturationBoost;
