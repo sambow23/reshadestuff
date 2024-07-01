@@ -178,6 +178,46 @@ sampler LastAdapt {
 
 //#region Helper Functions
 
+float3 RGB2Lab(float3 rgb)
+{
+    // Convert RGB to XYZ
+    float3 xyz = mul(float3x3(
+        0.4124564, 0.3575761, 0.1804375,
+        0.2126729, 0.7151522, 0.0721750,
+        0.0193339, 0.1191920, 0.9503041
+    ), rgb);
+
+    // XYZ to Lab
+    float3 n = xyz / float3(0.95047, 1.0, 1.08883);
+    float3 v = (n > 0.008856) ? pow(n, 1.0/3.0) : (7.787 * n + 16.0/116.0);
+    
+    return float3(
+        (116.0 * v.y) - 16.0,    // L
+        500.0 * (v.x - v.y),     // a
+        200.0 * (v.y - v.z)      // b
+    );
+}
+
+float3 Lab2RGB(float3 lab)
+{
+    float fy = (lab.x + 16.0) / 116.0;
+    float fx = lab.y / 500.0 + fy;
+    float fz = fy - lab.z / 200.0;
+
+    float3 xyz = float3(
+        0.95047 * ((fx > 0.206897) ? fx * fx * fx : (fx - 16.0/116.0) / 7.787),
+        1.00000 * ((fy > 0.206897) ? fy * fy * fy : (fy - 16.0/116.0) / 7.787),
+        1.08883 * ((fz > 0.206897) ? fz * fz * fz : (fz - 16.0/116.0) / 7.787)
+    );
+
+    // XYZ to RGB
+    return saturate(mul(float3x3(
+        3.2404542, -1.5371385, -0.4985314,
+        -0.9692660,  1.8760108,  0.0415560,
+        0.0556434, -0.2040259,  1.0572252
+    ), xyz));
+}
+
 // Calculate local luminance using bilateral filtering
 float CalculateLocalLuminance(float2 texcoord) {
     float totalWeight = 0.0;
@@ -215,7 +255,8 @@ float3 ACES_RRT(float3 color) {
 }
 
 // Local ACES RRT Tonemapping function
-float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance) {
+float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance)
+{
     const float A = 2.51;
     const float B = 0.03;
     const float C = 2.43;
@@ -225,27 +266,29 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float adaptationFactor = max(adaptedLuminance, 0.001);
     float3 adaptedColor = color / adaptationFactor;
 
-    // Local adaptation
+    // Convert to Lab space
+    float3 labColor = RGB2Lab(adaptedColor);
+
+    // Local adaptation in Lab space
     float localAdaptation = lerp(1.0, localLuminance / adaptationFactor, LocalAdaptationStrength);
-    adaptedColor *= localAdaptation;
+    labColor.x *= localAdaptation; // Adjust only the L channel
 
-    // Local Contrast
-    // Define a small epsilon value to avoid division by zero or extremely small values
-    const float epsilon = 0.001;
-    float safeAdaptationFactor = max(adaptationFactor, epsilon);
+    // Local Contrast in Lab space
+    float contrastAdaptation = 1.0 + (LocalContrastAdaptation * (1.0 - saturate(localLuminance / adaptationFactor)));
+    labColor.x *= contrastAdaptation;
 
-    // Calculate local contrast adaptation with clamping
-    float contrastAdaptation = 1.0 + (LocalContrastAdaptation * (1.0 - saturate(localLuminance / safeAdaptationFactor)));
+    // Convert back to RGB
+    float3 adjustedColor = Lab2RGB(labColor);
 
-    // Apply the contrast adaptation
-    adaptedColor *= contrastAdaptation;
-
-    float3 toneMapped = (adaptedColor * (A * adaptedColor + B)) / (adaptedColor * (C * adaptedColor + D) + E);
+    // Apply ACES RRT
+    float3 toneMapped = (adjustedColor * (A * adjustedColor + B)) / (adjustedColor * (C * adjustedColor + D) + E);
     
-    // Apply local saturation boost
-    float3 saturationBoost = lerp(dot(toneMapped, float3(0.2126, 0.7152, 0.0722)), toneMapped, 1.0 + LocalSaturationBoost * (1.0 - localLuminance / adaptationFactor));
+    // Apply local saturation boost in Lab space
+    float3 labToneMapped = RGB2Lab(toneMapped);
+    float saturationBoost = 1.0 + LocalSaturationBoost * (1.0 - localLuminance / adaptationFactor);
+    labToneMapped.yz *= saturationBoost;
     
-    return saturationBoost;
+    return Lab2RGB(labToneMapped);
 }
 
 // Apply Gamma Correction
@@ -277,7 +320,8 @@ float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Ta
 }
 
 // Main tonemapping pass
-float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET {
+float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
+{
     float4 color = tex2D(BackBuffer, texcoord);
     float localLuminance = CalculateLocalLuminance(texcoord);
     
@@ -289,7 +333,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET 
     // Apply exposure adjustment
     color.rgb *= exposure;
 
-    // Apply local ACES RRT tonemapping
+    // Apply local ACES RRT tonemapping with Lab space adjustments
     color.rgb = ACES_RRT_Local(color.rgb * TonemappingIntensity, localLuminance, adaptedLuminance);
 
     // Apply brightness adjustment
