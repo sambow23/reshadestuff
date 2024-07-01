@@ -25,7 +25,7 @@ uniform float Exposure <
     ui_label = "Exposure";
     ui_tooltip = "Adjusts the overall brightness before tonemapping. Higher values brighten the image, lower values darken it.";
     ui_category = "Exposure";
-    ui_min = -2.0;
+    ui_min = -3.0;
     ui_max = 2.0;
     ui_step = 0.01;
 > = 0.0;
@@ -80,7 +80,7 @@ uniform float Brightness <
     ui_tooltip = "Adjusts the overall brightness of the final image. Use this for fine-tuning after other adjustments.";
     ui_category = "Final Adjustments";
     ui_min = 0.5;
-    ui_max = 2.0;
+    ui_max = 5.0;
     ui_step = 0.01;
 > = 1.0;
 
