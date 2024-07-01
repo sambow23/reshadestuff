@@ -42,25 +42,25 @@ uniform float TonemappingIntensity <
 > = 0.8;
 
 // Local Adjustments
-uniform float LocalAdaptationStrength <
+uniform float LocalAdjustmentStrength <
     ui_type = "slider";
-    ui_label = "Local Adaptation";
-    ui_tooltip = "Adjusts how much the tone mapping adapts to local brightness. Higher values increase local contrast.";
+    ui_label = "Local Adjustment Strength";
+    ui_tooltip = "Controls the overall strength of local adjustments.";
     ui_category = "Local Adjustments";
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.2;
+> = 0.5;
 
-uniform float LocalContrastAdaptation <
+uniform float LocalAdjustmentCurve <
     ui_type = "slider";
-    ui_label = "Local Contrast";
-    ui_tooltip = "Enhances contrast in local areas. Higher values make details pop more.";
+    ui_label = "Local Adjustment Curve";
+    ui_tooltip = "Adjusts the balance between shadow and highlight processing.";
     ui_category = "Local Adjustments";
-    ui_min = 0.0;
+    ui_min = 0.1;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 0.0;
+> = 1.0;
 
 // Color
 uniform float LocalSaturationBoost <
@@ -269,26 +269,28 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     // Convert to Lab space
     float3 labColor = RGB2Lab(adaptedColor);
 
-    // Local adaptation in Lab space
-    float localAdaptation = lerp(1.0, localLuminance / adaptationFactor, LocalAdaptationStrength);
-    labColor.x *= localAdaptation; // Adjust only the L channel
+    // Automatic range adjustment
+    float sceneAvgLuminance = adaptedLuminance;
+    float dynamicRange = max(1.0, log2(1.0 / sceneAvgLuminance));
+    float adjustmentRange = lerp(0.1, 2.0, saturate(dynamicRange / 10.0));
 
-    // Local Contrast in Lab space
-    float contrastAdaptation = 1.0 + (LocalContrastAdaptation * (1.0 - saturate(localLuminance / adaptationFactor)));
-    labColor.x *= contrastAdaptation;
+    // Local adaptation with curve
+    float localAdaptation = pow(localLuminance / adaptationFactor, LocalAdjustmentCurve);
+    localAdaptation = lerp(1.0, localAdaptation, LocalAdjustmentStrength * adjustmentRange);
+
+    // Apply local adjustment to L channel
+    labColor.x *= localAdaptation;
 
     // Convert back to RGB
     float3 adjustedColor = Lab2RGB(labColor);
 
+    // Soft clipping to prevent harsh clipping
+    adjustedColor = 1.0 - exp(-adjustedColor);
+
     // Apply ACES RRT
     float3 toneMapped = (adjustedColor * (A * adjustedColor + B)) / (adjustedColor * (C * adjustedColor + D) + E);
     
-    // Apply local saturation boost in Lab space
-    float3 labToneMapped = RGB2Lab(toneMapped);
-    float saturationBoost = 1.0 + LocalSaturationBoost * (1.0 - localLuminance / adaptationFactor);
-    labToneMapped.yz *= saturationBoost;
-    
-    return Lab2RGB(labToneMapped);
+    return toneMapped;
 }
 
 // Apply Gamma Correction
@@ -334,7 +336,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     color.rgb *= exposure;
 
     // Apply local ACES RRT tonemapping with Lab space adjustments
-    color.rgb = ACES_RRT_Local(color.rgb * TonemappingIntensity, localLuminance, adaptedLuminance);
+    color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance);
 
     // Apply brightness adjustment
     color.rgb *= Brightness;
