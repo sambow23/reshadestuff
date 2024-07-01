@@ -121,9 +121,9 @@ uniform float AdaptSensitivity <
     ui_tooltip = "Determines how sensitive adaptation is to bright lights.";
     ui_category = "Adaptation";
     ui_min = 0.0;
-    ui_max = 3.0;
+    ui_max = 6.0;
     ui_step = 0.01;
-> = 1.0;
+> = 4.0;
 
 uniform int AdaptPrecision <
     ui_type = "slider";
