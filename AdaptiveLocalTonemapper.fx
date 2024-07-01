@@ -58,9 +58,9 @@ uniform float LocalContrastAdaptation <
     ui_tooltip = "Enhances contrast in local areas. Higher values make details pop more.";
     ui_category = "Local Adjustments";
     ui_min = 0.0;
-    ui_max = 1.0;
+    ui_max = 2.0;
     ui_step = 0.01;
-> = 0.2;
+> = 0.0;
 
 // Color
 uniform float LocalSaturationBoost <
@@ -225,12 +225,19 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float adaptationFactor = max(adaptedLuminance, 0.001);
     float3 adaptedColor = color / adaptationFactor;
 
-    // Apply local adaptation
+    // Local adaptation
     float localAdaptation = lerp(1.0, localLuminance / adaptationFactor, LocalAdaptationStrength);
     adaptedColor *= localAdaptation;
 
-    // Apply local contrast
-    float contrastAdaptation = 1.0 + (LocalContrastAdaptation * (1.0 - localLuminance / adaptationFactor));
+    // Local Contrast
+    // Define a small epsilon value to avoid division by zero or extremely small values
+    const float epsilon = 0.001;
+    float safeAdaptationFactor = max(adaptationFactor, epsilon);
+
+    // Calculate local contrast adaptation with clamping
+    float contrastAdaptation = 1.0 + (LocalContrastAdaptation * (1.0 - saturate(localLuminance / safeAdaptationFactor)));
+
+    // Apply the contrast adaptation
     adaptedColor *= contrastAdaptation;
 
     float3 toneMapped = (adaptedColor * (A * adaptedColor + B)) / (adaptedColor * (C * adaptedColor + D) + E);
