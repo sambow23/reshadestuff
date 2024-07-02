@@ -15,11 +15,6 @@
 #define BILATERAL_SIGMA_SPATIAL 3.0
 #define BILATERAL_SIGMA_RANGE 0.1
 
-//Histogram
-#define LHE_BINS 64
-#define LHE_TEMPORAL_WEIGHT 0.9 // Adjust this value to control temporal stability
-#define LHE_DOWNSCALE 2
-
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
 //#region Uniforms
@@ -149,71 +144,12 @@ uniform float2 AdaptFocalPoint <
     ui_step = 0.001;
 > = 0.5;
 
-uniform int LHETileSize <
-    ui_type = "slider";
-    ui_label = "LHE Tile Size";
-    ui_tooltip = "Size of tiles for Local Histogram Equalization. Larger tiles are faster but less local.";
-    ui_category = "Local Histogram Equalization";
-    ui_min = 8;
-    ui_max = 64;
-    ui_step = 8;
-> = 14;
-
-uniform float LHEStrength <
-    ui_type = "slider";
-    ui_label = "LHE Strength";
-    ui_tooltip = "Strength of the Local Histogram Equalization effect.";
-    ui_category = "Local Histogram Equalization";
-    ui_min = 0.0;
-    ui_max = 3.0;
-    ui_step = 0.01;
-> = 1.0;
-
-uniform float LHEDetailPreservation <
-    ui_type = "slider";
-    ui_label = "LHE Detail Preservation";
-    ui_tooltip = "Higher values preserve more original detail.";
-    ui_category = "Local Histogram Equalization";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.74;
-
-uniform float LHEBlurStrength <
-    ui_type = "slider";
-    ui_label = "LHE Blur Strength";
-    ui_tooltip = "Controls the strength of blur applied to smooth LHE result.";
-    ui_category = "Local Histogram Equalization";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.3;
-
-uniform float LHEEdgePreservation <
-    ui_type = "slider";
-    ui_label = "LHE Edge Preservation";
-    ui_tooltip = "Higher values preserve more edges from the original image.";
-    ui_category = "Local Histogram Equalization";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.5;
-
 uniform float FrameTime <source = "frametime";>;
 
 //#endregion
 
 //#region Textures and Samplers
 
-//Histogram
-#define LHE_TEX_WIDTH (BUFFER_WIDTH / 16)
-#define LHE_TEX_HEIGHT (BUFFER_HEIGHT / 16)
-
-texture2D LHEDownscaledTex { Width = BUFFER_WIDTH / LHE_DOWNSCALE; Height = BUFFER_HEIGHT / LHE_DOWNSCALE; Format = RGBA8; };
-sampler2D LHEDownscaledSampler { Texture = LHEDownscaledTex; };
-
-texture2D LHEResultTex { Width = BUFFER_WIDTH / LHE_DOWNSCALE; Height = BUFFER_HEIGHT / LHE_DOWNSCALE; Format = RGBA8; };
-sampler2D LHEResultSampler { Texture = LHEResultTex; };
-
-texture2D LHETemporalTex { Width = LHE_TEX_WIDTH; Height = LHE_TEX_HEIGHT; Format = R32F; };
-sampler2D LHETemporalSampler { Texture = LHETemporalTex; };
-
-
-//Main Shader Textures
 sampler BackBuffer {
     Texture = ReShade::BackBufferTex;
     SRGBTexture = true;
@@ -238,196 +174,9 @@ sampler LastAdapt {
     MipFilter = POINT;
 };
 
-
 //#endregion
 
 //#region Helper Functions
-
-//Histogram Hell
-
-// Gaussian blur function
-float3 GaussianBlur(sampler2D tex, float2 texcoord, float2 texelSize)
-{
-    float3 color = float3(0, 0, 0);
-    float total = 0.0;
-    float blurRadius = LHEBlurStrength * 5.0; // Amplify the blur radius
-    
-    [unroll]
-    for(int x = -2; x <= 2; x++)
-    {
-        [unroll]
-        for(int y = -2; y <= 2; y++)
-        {
-            float weight = exp(-(x*x + y*y) / (2.0 * blurRadius * blurRadius));
-            color += tex2D(tex, texcoord + float2(x, y) * texelSize * blurRadius).rgb * weight;
-            total += weight;
-        }
-    }
-    
-    return color / total;
-}
-
-// Gradient calculation
-float3 CalculateGradient(sampler2D tex, float2 texcoord, float2 texelSize)
-{
-    float3 dx = tex2D(tex, texcoord + float2(texelSize.x, 0)).rgb - tex2D(tex, texcoord - float2(texelSize.x, 0)).rgb;
-    float3 dy = tex2D(tex, texcoord + float2(0, texelSize.y)).rgb - tex2D(tex, texcoord - float2(0, texelSize.y)).rgb;
-    return sqrt(dx * dx + dy * dy);
-}
-
-float SoftHistogramEqualization(float value, float cdf) {
-    float alpha = 0.5; // Adjust this value to control softness
-    return lerp(value, cdf, alpha);
-}
-
-float4 PS_Downscale(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
-{
-    return tex2D(BackBuffer, texcoord);
-}
-
-// Main Histogram Shader
-float3 LocalHistogramEqualization(float2 texcoord)
-{
-    float3 color = tex2D(LHEDownscaledSampler, texcoord).rgb;
-    float2 pixelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-    float2 tileSize = pixelSize * LHETileSize;
-    float2 tileCoord = texcoord / tileSize;
-    float2 tileOffset = frac(tileCoord);
-    int2 tileIndex = floor(tileCoord);
-    
-    float3 equalizedColors[4]; // Flattened 2x2 array
-    
-    [unroll]
-    for (int i = 0; i < 4; i++)
-    {
-        int2 currentTileIndex = tileIndex + int2(i % 2, i / 2);
-        float2 currentTileStart = currentTileIndex * tileSize;
-        
-        // Calculate histogram
-        float histogram[LHE_BINS];
-        float totalPixels = 0;
-        
-        // Initialize histogram
-        [unroll]
-        for (int b = 0; b < LHE_BINS; b++)
-        {
-            histogram[b] = 0;
-        }
-        
-        [loop]
-        for (float ty = 0; ty < LHETileSize; ty += 1.0)
-        {
-            [loop]
-            for (float tx = 0; tx < LHETileSize; tx += 1.0)
-            {
-                float2 sampleCoord = currentTileStart + float2(tx, ty) * pixelSize;
-                if (all(sampleCoord < 1.0))
-                {
-                    float3 sampleColor = tex2Dlod(BackBuffer, float4(sampleCoord, 0, 0)).rgb;
-                    float luminance = dot(sampleColor, float3(0.299, 0.587, 0.114));
-                    int bin = int(luminance * (LHE_BINS - 1));
-                    histogram[bin] += 1;
-                    totalPixels += 1;
-                }
-            }
-        }
-        
-        // Temporal blending
-        float2 temporalCoord = (currentTileIndex + 0.5) * float2(LHETileSize, LHETileSize) / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-        float previousHistogram = tex2D(LHETemporalSampler, temporalCoord).r;
-        
-        // Calculate cumulative histogram
-        float cdf[LHE_BINS];
-        cdf[0] = lerp(histogram[0], previousHistogram * totalPixels, LHE_TEMPORAL_WEIGHT);
-        [unroll]
-        for (int j = 1; j < LHE_BINS; ++j)
-        {
-            cdf[j] = cdf[j-1] + lerp(histogram[j], previousHistogram * totalPixels, LHE_TEMPORAL_WEIGHT);
-        }
-        
-        // Normalize CDF
-        [unroll]
-        for (int k = 0; k < LHE_BINS; ++k)
-        {
-            cdf[k] /= totalPixels;
-        }
-        
-        float luminance = dot(color, float3(0.299, 0.587, 0.114));
-        int bin = int(luminance * (LHE_BINS - 1));
-        
-        // Apply soft equalization
-        float equalizedLuminance = SoftHistogramEqualization(luminance, cdf[bin]);
-        
-        // Apply detail preservation
-        float3 equalizedColor = lerp(color, color * (equalizedLuminance / max(luminance, 0.001)), 1 - LHEDetailPreservation);
-        
-        equalizedColors[i] = color * (equalizedLuminance / max(luminance, 0.001));
-        //return equalizedColor;
-    }
-    
-    // Bilinear interpolation
-    float3 interpolatedColor = lerp(
-        lerp(equalizedColors[0], equalizedColors[1], tileOffset.x),
-        lerp(equalizedColors[2], equalizedColors[3], tileOffset.x),
-        tileOffset.y
-    );
-    
-    // Blend with original color based on strength
-    return lerp(color, interpolatedColor, LHEStrength);
-}
-
-float4 PS_UpdateLHETemporal(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
-{
-    float2 texelSize = float2(LHETileSize, LHETileSize) / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-    if (any(frac(texcoord / texelSize) > 0))
-    discard;
-    float2 pixelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-    float2 tileSize = pixelSize * LHETileSize;
-    float2 tileStart = floor(texcoord / tileSize) * tileSize;
-    
-    float histogram[LHE_BINS];
-    float totalPixels = 0;
-    
-    // Initialize histogram
-    [unroll]
-    for (int b = 0; b < LHE_BINS; b++)
-    {
-        histogram[b] = 0;
-    }
-    
-    [loop]
-    for (float y = 0; y < LHETileSize; y += 1.0)
-    {
-        [loop]
-        for (float x = 0; x < LHETileSize; x += 1.0)
-        {
-            float2 sampleCoord = tileStart + float2(x, y) * pixelSize;
-            if (all(sampleCoord < 1.0))
-            {
-                float3 sampleColor = tex2Dlod(BackBuffer, float4(sampleCoord, 0, 0)).rgb;
-                float luminance = dot(sampleColor, float3(0.299, 0.587, 0.114));
-                int bin = int(luminance * (LHE_BINS - 1));
-                histogram[bin] += 1;
-                totalPixels += 1;
-            }
-        }
-    }
-    
-    float cdf = 0;
-    [unroll]
-    for (int i = 0; i < LHE_BINS; ++i)
-    {
-        cdf += histogram[i] / totalPixels;
-    }
-    
-    return float4(cdf, 0, 0, 1);
-}
-
-float4 PS_ApplyLHE(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
-{
-    float3 lheResult = LocalHistogramEqualization(texcoord);
-    return float4(lheResult, 1.0);
-}
 
 float3 RGB2Lab(float3 rgb)
 {
@@ -585,24 +334,6 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     
     // Apply exposure adjustment
     color.rgb *= exposure;
-    
-    // Apply LHE with advanced blending
-    float2 texelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-    float3 lheResult = tex2D(LHEResultSampler, texcoord).rgb;
-    float3 blurredLHE = GaussianBlur(LHEResultSampler, texcoord, texelSize);
-    
-    float3 originalGradient = CalculateGradient(BackBuffer, texcoord, texelSize);
-    float3 lheGradient = CalculateGradient(LHEResultSampler, texcoord, texelSize);
-    
-    float3 edgeWeight = saturate(1 - abs(originalGradient - lheGradient) * LHEEdgePreservation);
-    
-    float3 finalLHE = lerp(blurredLHE, lheResult, edgeWeight);
-    
-    // Calculate LHE blend factor
-    float lheBlendFactor = LHEStrength * (1.0 - LHEDetailPreservation);
-    
-    // Apply LHE result
-    color.rgb = lerp(color.rgb, finalLHE, lheBlendFactor);
 
     // Apply local ACES RRT tonemapping with Lab space adjustments
     color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance);
@@ -630,24 +361,6 @@ technique LocalTonemapper {
         VertexShader = PostProcessVS;
         PixelShader = PS_SaveAdaptation;
         RenderTarget = LastAdaptTex;
-    }
-    pass Downscale
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_Downscale;
-        RenderTarget = LHEDownscaledTex;
-    }
-    pass UpdateLHETemporal
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_UpdateLHETemporal;
-        RenderTarget = LHETemporalTex;
-    }
-    pass ApplyLHE
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_ApplyLHE;
-        RenderTarget = LHEResultTex;
     }
     pass ApplyTonemapping {
         VertexShader = PostProcessVS;
