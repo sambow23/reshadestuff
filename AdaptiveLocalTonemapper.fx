@@ -18,7 +18,7 @@
 //Histogram
 #define LHE_BINS 64
 #define LHE_TEMPORAL_WEIGHT 0.9 // Adjust this value to control temporal stability
-#define LHE_DOWNSCALE 8
+#define LHE_DOWNSCALE 2
 
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
@@ -126,7 +126,7 @@ uniform float AdaptSensitivity <
     ui_tooltip = "Determines how sensitive adaptation is to bright lights.";
     ui_category = "Adaptation";
     ui_min = 0.0;
-    ui_max = 20.0;
+    ui_max = 6.0;
     ui_step = 0.01;
 > = 4.0;
 
@@ -179,11 +179,11 @@ uniform float LHEDetailPreservation <
 
 uniform float LHEBlurStrength <
     ui_type = "slider";
-    ui_label = "LHE Blur Intensity";
-    ui_tooltip = "Controls the intensity of blur applied to the LHE result.";
+    ui_label = "LHE Blur Strength";
+    ui_tooltip = "Controls the strength of blur applied to smooth LHE result.";
     ui_category = "Local Histogram Equalization";
-    ui_min = 0.0; ui_max = 10.0; ui_step = 0.1;
-> = 2.0;
+    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+> = 0.3;
 
 uniform float LHEEdgePreservation <
     ui_type = "slider";
@@ -211,9 +211,6 @@ sampler2D LHEResultSampler { Texture = LHEResultTex; };
 
 texture2D LHETemporalTex { Width = LHE_TEX_WIDTH; Height = LHE_TEX_HEIGHT; Format = R32F; };
 sampler2D LHETemporalSampler { Texture = LHETemporalTex; };
-
-texture2D LHEBlurredTex { Width = BUFFER_WIDTH / LHE_DOWNSCALE; Height = BUFFER_HEIGHT / LHE_DOWNSCALE; Format = RGBA8; };
-sampler2D LHEBlurredSampler { Texture = LHEBlurredTex; };
 
 
 //Main Shader Textures
@@ -249,23 +246,20 @@ sampler LastAdapt {
 //Histogram Hell
 
 // Gaussian blur function
-float3 GaussianBlur(sampler2D tex, float2 texcoord, float2 texelSize, float blurStrength)
+float3 GaussianBlur(sampler2D tex, float2 texcoord, float2 texelSize)
 {
     float3 color = float3(0, 0, 0);
     float total = 0.0;
-    
-    const int kernelSize = 5;
-    float sigma = blurStrength * 2.0; // Increase this multiplier for stronger blur
+    float blurRadius = LHEBlurStrength * 5.0; // Amplify the blur radius
     
     [unroll]
-    for(int x = -kernelSize; x <= kernelSize; x++)
+    for(int x = -2; x <= 2; x++)
     {
         [unroll]
-        for(int y = -kernelSize; y <= kernelSize; y++)
+        for(int y = -2; y <= 2; y++)
         {
-            float2 offset = float2(x, y) * texelSize * blurStrength;
-            float weight = exp(-(x*x + y*y) / (2.0 * sigma * sigma));
-            color += tex2D(tex, texcoord + offset).rgb * weight;
+            float weight = exp(-(x*x + y*y) / (2.0 * blurRadius * blurRadius));
+            color += tex2D(tex, texcoord + float2(x, y) * texelSize * blurRadius).rgb * weight;
             total += weight;
         }
     }
@@ -290,7 +284,6 @@ float4 PS_Downscale(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_T
 {
     return tex2D(BackBuffer, texcoord);
 }
-
 
 // Main Histogram Shader
 float3 LocalHistogramEqualization(float2 texcoord)
@@ -434,13 +427,6 @@ float4 PS_ApplyLHE(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Ta
 {
     float3 lheResult = LocalHistogramEqualization(texcoord);
     return float4(lheResult, 1.0);
-}
-
-float4 PS_BlurLHE(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
-{
-    float2 texelSize = 1.0 / float2(BUFFER_WIDTH / LHE_DOWNSCALE, BUFFER_HEIGHT / LHE_DOWNSCALE);
-    float3 blurredLHE = GaussianBlur(LHEResultSampler, texcoord, texelSize, LHEBlurStrength);
-    return float4(blurredLHE, 1.0);
 }
 
 float3 RGB2Lab(float3 rgb)
@@ -600,11 +586,17 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply exposure adjustment
     color.rgb *= exposure;
     
-    // Apply LHE with blurring
+    // Apply LHE with advanced blending
+    float2 texelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
     float3 lheResult = tex2D(LHEResultSampler, texcoord).rgb;
-    float3 blurredLHE = tex2D(LHEBlurredSampler, texcoord).rgb;
+    float3 blurredLHE = GaussianBlur(LHEResultSampler, texcoord, texelSize);
     
-    float3 finalLHE = lerp(lheResult, blurredLHE, LHEBlurStrength);
+    float3 originalGradient = CalculateGradient(BackBuffer, texcoord, texelSize);
+    float3 lheGradient = CalculateGradient(LHEResultSampler, texcoord, texelSize);
+    
+    float3 edgeWeight = saturate(1 - abs(originalGradient - lheGradient) * LHEEdgePreservation);
+    
+    float3 finalLHE = lerp(blurredLHE, lheResult, edgeWeight);
     
     // Calculate LHE blend factor
     float lheBlendFactor = LHEStrength * (1.0 - LHEDetailPreservation);
