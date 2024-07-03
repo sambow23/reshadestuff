@@ -134,6 +134,13 @@ uniform float Exposure <
     ui_tooltip = "Adjusts the overall exposure of the image";
 > = 0.0;
 
+uniform float AnisotropicAmount <
+    ui_type = "slider";
+    ui_label = "Anisotropic Amount";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the strength of horizontal glare. Higher values make the glare more horizontal.";
+> = 0.5;
+
 uniform float FrameTime < source = "frametime"; >;
 
 // Textures
@@ -202,8 +209,8 @@ float3 ApplyChromaticAberration(float2 texcoord)
 }
 
 
-// Improved Gaussian blur function
-float3 GaussianBlur(sampler s, float2 texcoord, float radius)
+// Anisotropic blur function
+float3 AnisotropicBlur(sampler s, float2 texcoord, float radius)
 {
     float3 color = 0.0;
     float total = 0.0;
@@ -211,7 +218,13 @@ float3 GaussianBlur(sampler s, float2 texcoord, float radius)
 
     for(int i = 0; i < samples; i++)
     {
-        float2 offset = float2(sin(i * 6.28318 / samples), cos(i * 6.28318 / samples)) * radius * ReShade::PixelSize;
+        float angle = (i / float(samples)) * 3.14159 * 2.0;
+        
+        // Make the blur more horizontal
+        float2 offset = float2(cos(angle), sin(angle) * (1.0 - AnisotropicAmount));
+        
+        offset *= radius * ReShade::PixelSize;
+        
         float weight = 1.0 / samples;
         color += tex2D(s, texcoord + offset).rgb * weight;
         total += weight;
@@ -223,7 +236,7 @@ float3 GaussianBlur(sampler s, float2 texcoord, float radius)
 // Init Pass
 float4 PS_InitialVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-    float3 veilingGlare = GaussianBlur(samplerBrightPass, texcoord, VeilingGlareRadius);
+    float3 veilingGlare = AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius);
     return float4(veilingGlare, 1.0);
 }
 
@@ -286,9 +299,11 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     // Calculate adaptive exposure
     float exposure = exp2(Exposure) / adapt;
     
-    // Apply veiling glare and starburst
-    float3 veilingGlare = GaussianBlur(samplerVeilingGlare, texcoord, SmoothingRadius);
+    // Apply anisotropic veiling glare
+    float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, SmoothingRadius);
     veilingGlare = ApplySpectralFilter(veilingGlare);
+    
+    // Apply starburst effect
     float3 withStarburst = ApplyStarburst(color, texcoord);
     
     float3 finalGlare = max(veilingGlare, withStarburst - color);
