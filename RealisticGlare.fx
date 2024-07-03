@@ -130,6 +130,7 @@ uniform float2 AdaptFocalPoint <
 uniform float Exposure <
     ui_type = "slider";
     ui_label = "Exposure";
+    ui_category = "Final Changes";
     ui_min = -4.0; ui_max = 4.0;
     ui_tooltip = "Adjusts the overall exposure of the image";
 > = 0.0;
@@ -140,6 +141,52 @@ uniform float AnisotropicAmount <
     ui_min = 0.0; ui_max = 1.0;
     ui_tooltip = "Controls the strength of horizontal glare. Higher values make the glare more horizontal.";
 > = 0.5;
+
+uniform float VignetteStrength <
+    ui_type = "slider";
+    ui_label = "Vignette Strength";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.5;
+    ui_tooltip = "Controls the intensity of the vignette effect";
+> = 0.6;
+
+uniform float VignetteRadius <
+    ui_type = "slider";
+    ui_label = "Vignette Radius";
+    ui_category = "Vignette";
+    ui_min = 0.5; ui_max = 2.5;
+    ui_tooltip = "Controls the size of the vignette effect (larger values cover more of the screen)";
+> = 2.0;
+
+uniform float VignetteFalloff <
+    ui_type = "slider";
+    ui_label = "Vignette Falloff";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1;
+    ui_tooltip = "Controls the falloff of the vignette effect";
+> = 0.136;
+
+uniform float VignetteColorShift <
+    ui_type = "slider";
+    ui_label = "Vignette Color Shift";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.5;
+    ui_tooltip = "Controls the subtle color shift of the vignette (simulates chromatic aberration at edges)";
+> = 0.985;
+
+uniform float VignetteOpacity <
+    ui_type = "slider";
+    ui_label = "Vignette Opacity";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the overall visibility of the vignette effect";
+> = 1.0;
+
+uniform bool DebugVignette <
+    ui_label = "Debug Vignette";
+    ui_category = "Vignette";
+    ui_tooltip = "Show only the vignette effect";
+> = false;
 
 uniform float FrameTime < source = "frametime"; >;
 
@@ -170,6 +217,37 @@ sampler samplerLastAdaptation
 };
 
 //// Shaders
+
+// Vignette
+float4 CalculateVignette(float2 texcoord, float3 color)
+{
+    float2 coord = (texcoord - 0.5) * 2.0;
+    coord.x *= ReShade::AspectRatio;
+    
+    float dist = length(coord);
+    
+    // Base vignette
+    float vignette = smoothstep(VignetteRadius, VignetteRadius - VignetteFalloff, dist);
+    vignette = pow(vignette, 1.0 + VignetteStrength * 3.0);
+    
+    // Subtle color shift
+    float3 vignetteColor;
+    float colorShiftAmount = VignetteColorShift * 0.02;
+    vignetteColor.r = smoothstep(VignetteRadius * (1.0 - colorShiftAmount), (VignetteRadius - VignetteFalloff) * (1.0 - colorShiftAmount), dist);
+    vignetteColor.b = smoothstep(VignetteRadius * (1.0 + colorShiftAmount), (VignetteRadius - VignetteFalloff) * (1.0 + colorShiftAmount), dist);
+    vignetteColor.g = vignette;
+    
+    // Blend the color shift more subtly
+    float3 shiftedColor = lerp(color, color * vignetteColor, VignetteColorShift * 0.5);
+    
+    // Apply vignette darkening
+    float3 vignetted = shiftedColor * lerp(1.0 - VignetteStrength, 1.0, vignette);
+    
+    // Apply opacity
+    float3 finalColor = lerp(color, vignetted, VignetteOpacity);
+    
+    return float4(finalColor, vignette);
+}
 
 // Adaptation
 float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
@@ -311,18 +389,29 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     // Apply adaptive exposure to the glare
     finalGlare *= exposure;
     
+    // Combine original color with glare
+    float3 result = color + finalGlare * VeilingGlareIntensity;
+    
+    // Apply vignette
+    float4 vignetteResult = CalculateVignette(texcoord, result);
+    
     // Debug output
     if (DebugBloom)
     {
         return float4(finalGlare, 1.0);
     }
+    else if (DebugVignette)
+    {
+        // Show only the vignette factor
+        return float4(vignetteResult.aaa, 1.0);
+    }
     
-    // Normal output
-    float3 result = color + finalGlare * VeilingGlareIntensity;
-    result = saturate(result);
+    // Always apply vignette in normal mode
+    result = vignetteResult.rgb;
     
     return float4(result, 1.0);
 }
+
 
 technique RealisticGlare
 {
