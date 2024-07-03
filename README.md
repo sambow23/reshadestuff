@@ -22,7 +22,7 @@ Collection of shaders I have made
 * Starburst effect on bright points (WIP)
 * Chromatic aberration simulation
 * Adaptive exposure adjustment
-* Customizable vignette effect
+* Customizable physically-based vignette effect
 * Spectral filtering of glare
 
 All shader code was written by ChatGPT 4o and Claude 3.5 Sonnet
