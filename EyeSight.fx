@@ -413,7 +413,7 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
 }
 
 
-technique RealisticGlare
+technique EyeSight
 {
     pass CalculateAdaptation
     {
