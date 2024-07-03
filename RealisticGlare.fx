@@ -1,6 +1,10 @@
 #include "ReShade.fxh"
 #include "ReShadeUI.fxh"
 
+#define ADAPTIVE_TONEMAPPER_SMALL_TEX_SIZE 256
+#define ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS 9
+static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
+
 // Samplers
 sampler BackBuffer { Texture = ReShade::BackBufferTex; };
 
@@ -73,12 +77,112 @@ uniform float ChromaticAberrationStrength <
     ui_tooltip = "Strength of the chromatic aberration effect";
 > = 1.0;
 
+// Adaptation
+uniform float2 AdaptRange <
+    ui_type = "drag";
+    ui_label = "Adaptation Range";
+    ui_tooltip = "The minimum and maximum values that adaptation can use.";
+    ui_category = "Adaptation";
+    ui_min = 0.001;
+    ui_max = 1.0;
+    ui_step = 0.001;
+> = float2(0.0, 1.0);
+
+uniform float AdaptationTime <
+    ui_type = "drag";
+    ui_label = "Adaptation Time";
+    ui_tooltip = "The time in seconds that adaptation takes to occur.";
+    ui_category = "Adaptation";
+    ui_min = 0.0;
+    ui_max = 3.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float AdaptationSensitivity <
+    ui_type = "drag";
+    ui_label = "Adaptation Sensitivity";
+    ui_tooltip = "Determines how sensitive adaptation is to bright lights.";
+    ui_category = "Adaptation";
+    ui_min = 0.0;
+    ui_max = 6.0;
+    ui_step = 0.01;
+> = 4.0;
+
+uniform int AdaptPrecision <
+    ui_type = "slider";
+    ui_label = "Adaptation Precision";
+    ui_tooltip = "The amount of precision used when determining the overall brightness.";
+    ui_category = "Adaptation";
+    ui_min = 0;
+    ui_max = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
+> = 0;
+
+uniform float2 AdaptFocalPoint <
+    ui_type = "drag";
+    ui_label = "Adaptation Focal Point";
+    ui_tooltip = "Determines a point in the screen that adaptation will be centered around.";
+    ui_category = "Adaptation";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.001;
+> = 0.5;
+
+uniform float Exposure <
+    ui_type = "slider";
+    ui_label = "Exposure";
+    ui_min = -4.0; ui_max = 4.0;
+    ui_tooltip = "Adjusts the overall exposure of the image";
+> = 0.0;
+
+uniform float FrameTime < source = "frametime"; >;
+
 // Textures
 texture texBrightPass { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
 sampler samplerBrightPass { Texture = texBrightPass; };
 
 texture texVeilingGlare { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
 sampler samplerVeilingGlare { Texture = texVeilingGlare; };
+
+// Adaptation Textures
+texture texAdaptation
+{
+    Width = ADAPTIVE_TONEMAPPER_SMALL_TEX_SIZE;
+    Height = ADAPTIVE_TONEMAPPER_SMALL_TEX_SIZE;
+    Format = R32F;
+    MipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
+};
+sampler samplerAdaptation { Texture = texAdaptation; };
+
+texture texLastAdaptation { Format = R32F; };
+sampler samplerLastAdaptation 
+{ 
+    Texture = texLastAdaptation;
+    MinFilter = POINT;
+    MagFilter = POINT;
+    MipFilter = POINT;
+};
+
+//// Shaders
+
+// Adaptation
+float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+    float3 color = tex2D(BackBuffer, uv).rgb;
+    float adapt = dot(color, float3(0.299, 0.587, 0.114));
+    adapt *= AdaptationSensitivity;
+
+    float last = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
+
+    if (AdaptationTime > 0.0)
+        adapt = lerp(last, adapt, saturate((FrameTime * 0.001) / AdaptationTime));
+
+    return adapt;
+}
+
+float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+    return tex2Dlod(samplerAdaptation, float4(AdaptFocalPoint, 0, AdaptMipLevels - AdaptPrecision));
+}
 
 // CA
 float3 ApplyChromaticAberration(float2 texcoord)
@@ -175,17 +279,22 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
 {
     float3 color = ApplyChromaticAberration(texcoord);
     
-    // Apply smoothing blur to the veiling glare
+    // Get the current adaptation value
+    float adapt = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
+    adapt = clamp(adapt, AdaptRange.x, AdaptRange.y);
+    
+    // Calculate adaptive exposure
+    float exposure = exp2(Exposure) / adapt;
+    
+    // Apply veiling glare and starburst
     float3 veilingGlare = GaussianBlur(samplerVeilingGlare, texcoord, SmoothingRadius);
-    
-    // Apply spectral filter to the glare
     veilingGlare = ApplySpectralFilter(veilingGlare);
-    
-    // Apply starburst effect
     float3 withStarburst = ApplyStarburst(color, texcoord);
     
-    // Combine veiling glare and starburst
     float3 finalGlare = max(veilingGlare, withStarburst - color);
+    
+    // Apply adaptive exposure to the glare
+    finalGlare *= exposure;
     
     // Debug output
     if (DebugBloom)
@@ -195,27 +304,37 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     
     // Normal output
     float3 result = color + finalGlare * VeilingGlareIntensity;
-    result = saturate(result); // Ensure we don't exceed 1.0
+    result = saturate(result);
     
     return float4(result, 1.0);
 }
 
 technique RealisticGlare
 {
+    pass CalculateAdaptation
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_CalculateAdaptation;
+        RenderTarget = texAdaptation;
+    }
+    pass SaveAdaptation
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_SaveAdaptation;
+        RenderTarget = texLastAdaptation;
+    }
     pass BrightPass
     {
         VertexShader = PostProcessVS;
         PixelShader = PS_BrightPass;
         RenderTarget = texBrightPass;
     }
-
     pass InitialVeilingGlare
     {
         VertexShader = PostProcessVS;
         PixelShader = PS_InitialVeilingGlare;
         RenderTarget = texVeilingGlare;
     }
-
     pass FinalGlare
     {
         VertexShader = PostProcessVS;
