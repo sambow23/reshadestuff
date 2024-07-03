@@ -3,10 +3,18 @@ Collection of shaders I have made
 
 ## AdaptiveLocalTonemapper:
 ### Features
-* Advanced ACES RRT Implementation for a cinematic color pallete.
-* Customizable Brightness/Luminance Adaptation to keep the scene correctly exposed.
-* Local tonemapping with many adjustment options.
-* Has Global Exposure, Contrast, and Gamma options to fit any kind of game/content.
+* Adaptive exposure adjustment
+* Local contrast enhancement
+* ACES RRT (Reference Rendering Transform) tonemapping
+* Color space conversions (RGB to Lab and back)
+* Bilateral filtering for local luminance calculation
+#### Customizable parameters including:
+* Exposure and brightness
+* Tonemapping intensity
+* Local adjustment strength and curve
+* Color vibrance
+* Gamma correction
+* Adaptation settings (range, time, sensitivity)
 
 ## EyeSight
 ### Features
