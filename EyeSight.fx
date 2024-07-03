@@ -188,6 +188,14 @@ uniform bool DebugVignette <
     ui_tooltip = "Show only the vignette effect";
 > = false;
 
+uniform float GlobalOpacity <
+    ui_type = "slider";
+    ui_label = "Global Opacity";
+    ui_category = "Final Changes";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the opacity of the shader";
+> = 1.0;
+
 uniform float FrameTime < source = "frametime"; >;
 
 // Textures
@@ -368,6 +376,7 @@ float3 ApplyStarburst(float3 color, float2 texcoord)
 // Main pass
 float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
+    float3 originalColor = tex2D(BackBuffer, texcoord).rgb;
     float3 color = ApplyChromaticAberration(texcoord);
     
     // Get the current adaptation value
@@ -406,8 +415,11 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
         return float4(vignetteResult.aaa, 1.0);
     }
     
-    // Always apply vignette in normal mode
+    // Apply vignette in normal mode
     result = vignetteResult.rgb;
+    
+    // Apply global opacity
+    result = lerp(originalColor, result, GlobalOpacity);
     
     return float4(result, 1.0);
 }
