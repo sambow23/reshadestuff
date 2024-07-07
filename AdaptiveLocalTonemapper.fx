@@ -174,16 +174,6 @@ uniform float HighlightAdjustment <
     ui_step = 0.01;
 > = 1.0;
 
-uniform float ZonalThreshold <
-    ui_type = "slider";
-    ui_label = "Zonal Threshold";
-    ui_tooltip = "Adjusts the thresholds between shadows, midtones, and highlights.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.1;
-    ui_max = 0.9;
-    ui_step = 0.01;
-> = 0.5;
-
 uniform float MidtonesCenter <
     ui_type = "slider";
     ui_label = "Midtones Center";
