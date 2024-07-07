@@ -23,7 +23,7 @@ Collection of shaders I have made
 * Zonal Control of Tonemapping
 
 ## EyeSight
-Non-Bloom shader that emulates parts of the human eye
+Shader that emulates parts of the human eye
 ### Features
 * Veiling glare (soft glow around bright areas)
 * Chromatic aberration simulation
