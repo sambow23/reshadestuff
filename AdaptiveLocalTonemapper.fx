@@ -255,7 +255,7 @@ float3 ACES_RRT(float3 color) {
 }
 
 // Local ACES RRT Tonemapping function
-float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance)
+float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
 {
     const float A = 2.51;
     const float B = 0.03;
@@ -287,10 +287,11 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     // Soft clipping to prevent harsh clipping
     adjustedColor = 1.0 - exp(-adjustedColor);
 
-    // Apply ACES RRT
+    // Apply ACES RRT with intensity control
     float3 toneMapped = (adjustedColor * (A * adjustedColor + B)) / (adjustedColor * (C * adjustedColor + D) + E);
     
-    return toneMapped;
+    // Blend between original and tonemapped based on intensity
+    return lerp(adjustedColor, toneMapped, intensity);
 }
 
 // Apply Gamma Correction
@@ -335,8 +336,8 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply exposure adjustment
     color.rgb *= exposure;
 
-    // Apply local ACES RRT tonemapping with Lab space adjustments
-    color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance);
+    // Apply local ACES RRT tonemapping with Lab space adjustments and intensity control
+    color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
 
     // Apply brightness adjustment
     color.rgb *= Brightness;
