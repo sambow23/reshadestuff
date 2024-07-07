@@ -96,7 +96,7 @@ uniform float AdaptationTime <
     ui_min = 0.0;
     ui_max = 3.0;
     ui_step = 0.01;
-> = 1.0;
+> = 0.4;
 
 uniform float AdaptationSensitivity <
     ui_type = "drag";
@@ -104,9 +104,9 @@ uniform float AdaptationSensitivity <
     ui_tooltip = "Determines how sensitive adaptation is to bright lights.";
     ui_category = "Adaptation";
     ui_min = 0.0;
-    ui_max = 6.0;
+    ui_max = 15.0;
     ui_step = 0.01;
-> = 4.0;
+> = 10.0;
 
 uniform int AdaptPrecision <
     ui_type = "slider";
