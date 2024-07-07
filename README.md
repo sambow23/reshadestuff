@@ -1,3 +1,8 @@
+
+> All shader code was written by ChatGPT 4o and Claude 3.5 Sonnet\
+> Adapation code from: [luluco250's AdaptiveTonemapper.fx](https://github.com/luluco250/FXShaders/blob/master/Shaders/AdaptiveTonemapper.fx)
+
+
 # ReShade Stuff
 Collection of shaders I have made
 
@@ -29,6 +34,3 @@ Non-Bloom shader that emulates parts of the human eye
 ## RTGI Saturation Patch
 Adds a saturation slider to Marty's RTGI shader, useful for games where its oversaturated.
 
-All shader code was written by ChatGPT 4o and Claude 3.5 Sonnet
-
-Adapation code from: [luluco250's AdaptiveTonemapper.fx](https://github.com/luluco250/FXShaders/blob/master/Shaders/AdaptiveTonemapper.fx)
