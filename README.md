@@ -15,11 +15,12 @@ Collection of shaders I have made
 * Color vibrance
 * Gamma correction
 * Adaptation settings (range, time, sensitivity)
+* Zonal Control of Tonemapping
 
 ## EyeSight
+Non-Bloom shader that emulates parts of the human eye
 ### Features
 * Veiling glare (soft glow around bright areas)
-* Starburst effect on bright points (WIP)
 * Chromatic aberration simulation
 * Adaptive exposure adjustment
 * Customizable physically-based vignette effect
