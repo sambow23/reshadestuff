@@ -44,27 +44,6 @@ uniform float SpectralFilterStrength <
     ui_tooltip = "Strength of the spectral filter applied to the glare";
 > = 0.5;
 
-uniform float StarburstIntensity <
-    ui_type = "slider";
-    ui_label = "Starburst Intensity";
-    ui_min = 0.0; ui_max = 1.0;
-    ui_tooltip = "Intensity of the starburst effect";
-> = 0.5;
-
-uniform int StarburstPoints <
-    ui_type = "slider";
-    ui_label = "Starburst Points";
-    ui_min = 4; ui_max = 16;
-    ui_tooltip = "Number of points in the starburst pattern";
-> = 8;
-
-uniform float StarburstLength <
-    ui_type = "slider";
-    ui_label = "Starburst Length";
-    ui_min = 0.0; ui_max = 1.0;
-    ui_tooltip = "Length of the starburst rays";
-> = 0.1;
-
 uniform bool DebugBloom <
     ui_label = "Debug Bloom";
     ui_tooltip = "Show only the bloom effect without the original image";
@@ -342,37 +321,6 @@ float3 ApplySpectralFilter(float3 color)
     return lerp(color, color * filterColor, SpectralFilterStrength);
 }
 
-float3 ApplyStarburst(float3 color, float2 texcoord)
-{
-    float brightness = dot(color, float3(0.2126, 0.7152, 0.0722));
-    float threshold = 0.8; // Adjust this threshold as needed
-    
-    if (brightness > threshold)
-    {
-        float2 center = texcoord;
-        float starburst = 0.0;
-        
-        for (int i = 0; i < StarburstPoints; i++)
-        {
-            float angle = (2.0 * 3.14159 * i) / StarburstPoints;
-            float2 direction = float2(cos(angle), sin(angle));
-            
-            for (float t = 0.0; t < StarburstLength; t += 0.01)
-            {
-                float2 samplePos = center + direction * t;
-                float3 sampleColor = tex2D(BackBuffer, samplePos).rgb;
-                float sampleBrightness = dot(sampleColor, float3(0.2126, 0.7152, 0.0722));
-                starburst += max(0, sampleBrightness - threshold) * (1.0 - t / StarburstLength);
-            }
-        }
-        
-        starburst /= StarburstPoints;
-        return color + starburst * StarburstIntensity;
-    }
-    
-    return color;
-}
-
 // Main pass
 float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
@@ -390,13 +338,10 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, SmoothingRadius);
     veilingGlare = ApplySpectralFilter(veilingGlare);
     
-    // Apply starburst effect
-    float3 withStarburst = ApplyStarburst(color, texcoord);
-    
-    float3 finalGlare = max(veilingGlare, withStarburst - color);
+    float3 finalGlare = (veilingGlare);
     
     // Apply adaptive exposure to the glare
-    finalGlare *= exposure;
+    veilingGlare *= exposure;
     
     // Combine original color with glare
     float3 result = color + finalGlare * VeilingGlareIntensity;
