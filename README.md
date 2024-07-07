@@ -15,7 +15,7 @@ Collection of shaders I have made
 * Color vibrance
 * Gamma correction
 * Adaptation settings (range, time, sensitivity)
-* Zonal Control of the Tonemapping
+* Zonal Control of Tonemapping
 
 ## EyeSight
 ### Features
