@@ -54,7 +54,7 @@ uniform float ChromaticAberrationStrength <
     ui_label = "Chromatic Aberration Strength";
     ui_min = 0.0; ui_max = 10.0;
     ui_tooltip = "Strength of the chromatic aberration effect";
-> = 1.0;
+> = 0.25;
 
 // Adaptation
 uniform float2 AdaptRange <
