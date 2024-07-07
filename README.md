@@ -20,7 +20,6 @@ Collection of shaders I have made
 ## EyeSight
 ### Features
 * Veiling glare (soft glow around bright areas)
-* Starburst effect on bright points (WIP)
 * Chromatic aberration simulation
 * Adaptive exposure adjustment
 * Customizable physically-based vignette effect
