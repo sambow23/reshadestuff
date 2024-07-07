@@ -88,7 +88,7 @@ uniform float VibranceCurve <
     ui_label = "Vibrance Curve";
     ui_tooltip = "Adjusts the curve of the vibrance effect. Higher values boost less saturated colors more.";
     ui_category = "Color";
-    ui_min = 0.0;
+    ui_min = 0.5;
     ui_max = 2.0;
     ui_step = 0.01;
 > = 1.0;
