@@ -73,6 +73,26 @@ uniform float LocalSaturationBoost <
     ui_step = 0.01;
 > = 0.1;
 
+uniform float SkinToneProtection <
+    ui_type = "slider";
+    ui_label = "Skin Tone Protection";
+    ui_tooltip = "Higher values protect skin tones from oversaturation.";
+    ui_category = "Color";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.5;
+
+uniform float VibranceCurve <
+    ui_type = "slider";
+    ui_label = "Vibrance Curve";
+    ui_tooltip = "Adjusts the curve of the vibrance effect. Higher values boost less saturated colors more.";
+    ui_category = "Color";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
+
 // Final Adjustments
 uniform float Brightness <
     ui_type = "slider";
@@ -418,6 +438,25 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 
     // Apply local ACES RRT tonemapping with Lab space adjustments and zonal intensity control
     color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
+
+    // Apply enhanced local saturation boost
+    float luma = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
+    float saturation = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
+    float adjustedSaturation = pow(saturation, VibranceCurve);
+
+    // Skin tone detection (simple approximation)
+    float skinTone = smoothstep(0.2, 0.6, color.r) * smoothstep(0.6, 0.2, color.g) * smoothstep(0.4, 0.2, color.b);
+    float skinProtect = lerp(1.0, saturate(1.0 - skinTone), SkinToneProtection);
+
+    // Calculate boost factor
+    float boostFactor = 1.0 + LocalSaturationBoost * (1.0 - adjustedSaturation) * skinProtect;
+
+    // Apply the boost with a soft limit
+    float3 boostedColor = lerp(float3(luma, luma, luma), color.rgb, boostFactor);
+    color.rgb = lerp(color.rgb, boostedColor, skinProtect);
+
+    // Soft limit to prevent oversaturation
+    color.rgb = lerp(color.rgb, float3(luma, luma, luma), saturate(saturation - 1.0));
 
     // Apply brightness adjustment
     color.rgb *= Brightness;
