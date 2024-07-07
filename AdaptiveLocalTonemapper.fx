@@ -19,6 +19,28 @@ static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
 //#region Uniforms
 
+// Final Adjustments
+uniform float Brightness <
+    ui_type = "slider";
+    ui_label = "Final Brightness";
+    ui_tooltip = "Adjusts the overall brightness of the final image. Use this for fine-tuning after other adjustments.";
+    ui_category = "Final Adjustments";
+    ui_min = 0.5;
+    ui_max = 5.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float Gamma <
+    ui_type = "slider";
+    ui_label = "Final Gamma";
+    ui_tooltip = "Adjusts the gamma curve of the final image. Lower values brighten shadows, higher values darken midtones.";
+    ui_category = "Final Adjustments";
+    ui_min = 0.1;
+    ui_max = 2.2;
+    ui_step = 0.01;
+> = 1.0;
+
+
 // Exposure
 uniform float Exposure <
     ui_type = "slider";
@@ -93,26 +115,57 @@ uniform float VibranceCurve <
     ui_step = 0.01;
 > = 1.0;
 
-// Final Adjustments
-uniform float Brightness <
+
+// Zonal Adjustments
+uniform float ShadowAdjustment <
     ui_type = "slider";
-    ui_label = "Final Brightness";
-    ui_tooltip = "Adjusts the overall brightness of the final image. Use this for fine-tuning after other adjustments.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.5;
-    ui_max = 5.0;
+    ui_label = "Shadow Adjustment";
+    ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
     ui_step = 0.01;
 > = 1.0;
 
-uniform float Gamma <
+uniform float MidtoneAdjustment <
     ui_type = "slider";
-    ui_label = "Final Gamma";
-    ui_tooltip = "Adjusts the gamma curve of the final image. Lower values brighten shadows, higher values darken midtones.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.1;
-    ui_max = 2.2;
+    ui_label = "Midtone Adjustment";
+    ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
     ui_step = 0.01;
 > = 1.0;
+
+uniform float HighlightAdjustment <
+    ui_type = "slider";
+    ui_label = "Highlight Adjustment";
+    ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float MidtonesCenter <
+    ui_type = "slider";
+    ui_label = "Midtones Center";
+    ui_tooltip = "Center point of the midtone range.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.5;
+
+uniform float MidtonesWidth <
+    ui_type = "slider";
+    ui_label = "Midtones Width";
+    ui_tooltip = "Width of the midtone range.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.1;
+    ui_max = 0.8;
+    ui_step = 0.01;
+> = 0.4;
 
 // Adaptation
 uniform float2 AdaptRange <
@@ -164,55 +217,6 @@ uniform float2 AdaptFocalPoint <
     ui_step = 0.001;
 > = 0.5;
 
-uniform float ShadowAdjustment <
-    ui_type = "slider";
-    ui_label = "Shadow Adjustment";
-    ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.0;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.0;
-
-uniform float MidtoneAdjustment <
-    ui_type = "slider";
-    ui_label = "Midtone Adjustment";
-    ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.0;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.0;
-
-uniform float HighlightAdjustment <
-    ui_type = "slider";
-    ui_label = "Highlight Adjustment";
-    ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.0;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.0;
-
-uniform float MidtonesCenter <
-    ui_type = "slider";
-    ui_label = "Midtones Center";
-    ui_tooltip = "Center point of the midtone range.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.0;
-    ui_max = 1.0;
-    ui_step = 0.01;
-> = 0.5;
-
-uniform float MidtonesWidth <
-    ui_type = "slider";
-    ui_label = "Midtones Width";
-    ui_tooltip = "Width of the midtone range.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.1;
-    ui_max = 0.8;
-    ui_step = 0.01;
-> = 0.4;
 
 uniform float FrameTime <source = "frametime";>;
 
