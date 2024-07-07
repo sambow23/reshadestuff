@@ -144,6 +144,66 @@ uniform float2 AdaptFocalPoint <
     ui_step = 0.001;
 > = 0.5;
 
+uniform float ShadowAdjustment <
+    ui_type = "slider";
+    ui_label = "Shadow Adjustment";
+    ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float MidtoneAdjustment <
+    ui_type = "slider";
+    ui_label = "Midtone Adjustment";
+    ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float HighlightAdjustment <
+    ui_type = "slider";
+    ui_label = "Highlight Adjustment";
+    ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float ZonalThreshold <
+    ui_type = "slider";
+    ui_label = "Zonal Threshold";
+    ui_tooltip = "Adjusts the thresholds between shadows, midtones, and highlights.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.1;
+    ui_max = 0.9;
+    ui_step = 0.01;
+> = 0.5;
+
+uniform float MidtonesCenter <
+    ui_type = "slider";
+    ui_label = "Midtones Center";
+    ui_tooltip = "Center point of the midtone range.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.5;
+
+uniform float MidtonesWidth <
+    ui_type = "slider";
+    ui_label = "Midtones Width";
+    ui_tooltip = "Width of the midtone range.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.1;
+    ui_max = 0.8;
+    ui_step = 0.01;
+> = 0.4;
+
 uniform float FrameTime <source = "frametime";>;
 
 //#endregion
@@ -177,6 +237,11 @@ sampler LastAdapt {
 //#endregion
 
 //#region Helper Functions
+
+float smootherstep(float edge0, float edge1, float x) {
+    x = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return x * x * x * (x * (x * 6 - 15) + 10);
+}
 
 float3 RGB2Lab(float3 rgb)
 {
@@ -287,11 +352,36 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     // Soft clipping to prevent harsh clipping
     adjustedColor = 1.0 - exp(-adjustedColor);
 
-    // Apply ACES RRT with intensity control
+    // Calculate luminance
+    float luminance = dot(adjustedColor, float3(0.2126, 0.7152, 0.0722));
+
+    // Zonal Definitions
+    float HighlightsStart = 0.0;
+    float ShadowsEnd = 0.3;
+
+    // Calculate zonal weights
+    float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, luminance);
+    float highlightWeight = smootherstep(HighlightsStart, 0.5, luminance);
+    
+    // Independent midtone weight calculation
+    float midtoneWeight = exp(-pow(luminance - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
+
+    // Normalize weights
+    float totalWeight = shadowWeight + midtoneWeight + highlightWeight;
+    shadowWeight /= totalWeight;
+    midtoneWeight /= totalWeight;
+    highlightWeight /= totalWeight;
+
+    // Apply ACES RRT with zonal intensity control
     float3 toneMapped = (adjustedColor * (A * adjustedColor + B)) / (adjustedColor * (C * adjustedColor + D) + E);
     
-    // Blend between original and tonemapped based on intensity
-    return lerp(adjustedColor, toneMapped, intensity);
+    // Calculate zonal tonemapping intensity
+    float zonalIntensity = shadowWeight * ShadowAdjustment + 
+                           midtoneWeight * MidtoneAdjustment + 
+                           highlightWeight * HighlightAdjustment;
+
+    // Blend between original and tonemapped based on zonal intensities
+    return lerp(adjustedColor, toneMapped, intensity * zonalIntensity);
 }
 
 // Apply Gamma Correction
@@ -336,7 +426,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply exposure adjustment
     color.rgb *= exposure;
 
-    // Apply local ACES RRT tonemapping with Lab space adjustments and intensity control
+    // Apply local ACES RRT tonemapping with Lab space adjustments and zonal intensity control
     color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
 
     // Apply brightness adjustment
