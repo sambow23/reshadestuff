@@ -30,7 +30,3 @@ Shader that emulates parts of the human eye
 * Adaptive exposure adjustment
 * Customizable physically-based vignette effect
 * Spectral filtering of glare
-
-## RTGI Saturation Patch
-Adds a saturation slider to Marty's RTGI shader, useful for games where its oversaturated.
-
