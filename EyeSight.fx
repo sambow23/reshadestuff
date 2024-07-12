@@ -178,7 +178,7 @@ uniform bool DebugVignette <
 > = false;
 
 uniform bool DebugBloom <
-    ui_label = "Debug Bloom";
+    ui_label = "Debug VLGlare";
     ui_category = "Debug";
     ui_tooltip = "Show only the bloom effect without the original image";
 > = false;
