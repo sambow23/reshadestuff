@@ -255,10 +255,13 @@ float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : 
 {
     float3 color = tex2D(BackBuffer, uv).rgb;
     float luminance = dot(color, float3(0.299, 0.587, 0.114));
-    float adapt = luminance * AdaptationSensitivity;
+    
+    // Use a non-linear function to compress high luminance values
+    float compressedLuminance = 1.0 - exp(-luminance * AdaptationSensitivity);
+    float adapt = compressedLuminance;
 
-    // Clamp adapt to a reasonable range
-    adapt = clamp(adapt, 0.001, 1.0);
+    // Increase the clamping range
+    adapt = clamp(adapt, 0.0001, 0.9999);
 
     float last = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
 
@@ -349,14 +352,19 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     float adapt = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
     adapt = clamp(adapt, AdaptRange.x, AdaptRange.y);
     
-    // Calculate adaptive exposure
-    float adaptiveExposure = 1.0 / adapt;
+    // Calculate adaptive exposure for glare only
+    float adaptiveExposure = 1.0 / max(adapt, 0.0001);
     float manualExposure = exp2(Exposure);
     float finalExposure = manualExposure * adaptiveExposure;
     
-    // Apply anisotropic veiling glare
-    float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, SmoothingRadius);
+    // Calculate glare threshold based on adaptation
+    float dynamicGlareThreshold = lerp(GlareThreshold, GlareThreshold * 3.0, saturate(adapt));
+    
+    // Apply anisotropic veiling glare with dynamic threshold
+    float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, VeilingGlareRadius);
     veilingGlare = ApplySpectralFilter(veilingGlare);
+    float glareIntensity = max(0, dot(veilingGlare, float3(0.299, 0.587, 0.114)) - dynamicGlareThreshold);
+    veilingGlare *= glareIntensity;
     
     // Apply exposure to the glare
     veilingGlare *= finalExposure;
