@@ -217,6 +217,16 @@ sampler samplerLastAdaptation
     MipFilter = POINT;
 };
 
+// Local Adaptation
+texture texLocalAdaptation
+{
+    Width = BUFFER_WIDTH / 1;
+    Height = BUFFER_HEIGHT / 1;
+    Format = R32F;
+    MipLevels = 1;
+};
+sampler samplerLocalAdaptation { Texture = texLocalAdaptation; };
+
 //// Shaders
 
 // Vignette
@@ -251,20 +261,29 @@ float4 CalculateVignette(float2 texcoord, float3 color)
 }
 
 // Adaptation
-float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+float4 PS_CalculateLocalAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
-    float3 color = tex2D(BackBuffer, uv).rgb;
+    float3 color = 0;
+    float2 texelSize = 1.0 / float2(BUFFER_WIDTH / 8, BUFFER_HEIGHT / 8);
+    float totalWeight = 0;
+
+    for (int y = -4; y <= 4; y++)
+    {
+        for (int x = -4; x <= 4; x++)
+        {
+            float2 offset = float2(x, y) * texelSize * 8;
+            float weight = exp(-(x*x + y*y) / 16.0);  // Gaussian-like weight
+            color += tex2D(BackBuffer, uv + offset).rgb * weight;
+            totalWeight += weight;
+        }
+    }
+    color /= totalWeight;
+
     float luminance = dot(color, float3(0.299, 0.587, 0.114));
-    
-    // Use a non-linear function to compress high luminance values
     float compressedLuminance = 1.0 - exp(-luminance * AdaptationSensitivity);
-    float adapt = compressedLuminance;
+    float adapt = clamp(compressedLuminance, 0.0001, 0.9999);
 
-    // Increase the clamping range
-    adapt = clamp(adapt, 0.0001, 0.9999);
-
-    float last = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
-
+    float last = tex2D(samplerLocalAdaptation, uv).x;
     float adaptationRate = saturate((FrameTime * 0.001) / max(AdaptationTime, 0.001));
     adapt = lerp(last, adapt, adaptationRate);
 
@@ -296,11 +315,12 @@ float3 ApplyChromaticAberration(float2 texcoord)
 
 
 // Anisotropic blur function
-float3 AnisotropicBlur(sampler s, float2 texcoord, float radius)
+float3 AnisotropicBlur(sampler s, float2 texcoord, float veilingGlareRadius, float smoothingRadius)
 {
     float3 color = 0.0;
     float total = 0.0;
-    int samples = min(32, ceil(radius));
+    float combinedRadius = veilingGlareRadius + smoothingRadius;
+    int samples = min(64, ceil(combinedRadius));  // Increased max samples for better quality
 
     for(int i = 0; i < samples; i++)
     {
@@ -309,20 +329,24 @@ float3 AnisotropicBlur(sampler s, float2 texcoord, float radius)
         // Make the blur more horizontal
         float2 offset = float2(cos(angle), sin(angle) * (1.0 - AnisotropicAmount));
         
-        offset *= radius * ReShade::PixelSize;
+        // Use the combined radius
+        offset *= combinedRadius * ReShade::PixelSize;
         
-        float weight = 1.0 / samples;
+        // Use a Gaussian-like weight based on distance
+        float distance = length(offset);
+        float weight = exp(-distance * distance / (2.0 * smoothingRadius * smoothingRadius));
+        
         color += tex2D(s, texcoord + offset).rgb * weight;
         total += weight;
     }
     
-    return color / total;
+    return color / max(total, 0.0001);
 }
 
 // Init Pass
 float4 PS_InitialVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-    float3 veilingGlare = AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius);
+    float3 veilingGlare = AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius, SmoothingRadius);
     return float4(veilingGlare, 1.0);
 }
 
@@ -342,26 +366,53 @@ float3 ApplySpectralFilter(float3 color)
     return lerp(color, color * filterColor, SpectralFilterStrength);
 }
 
+float4 PS_BlurLocalAdaptation(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+{
+    float adapt = 0;
+    float2 texelSize = 1.0 / float2(BUFFER_WIDTH / 8, BUFFER_HEIGHT / 8);
+
+    for (int y = -2; y <= 2; y++)
+    {
+        for (int x = -2; x <= 2; x++)
+        {
+            float2 offset = float2(x, y) * texelSize;
+            adapt += tex2D(samplerLocalAdaptation, texcoord + offset).x;
+        }
+    }
+    adapt /= 25.0;
+
+    return adapt;
+}
+
 // Main pass
 float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
     float3 originalColor = tex2D(BackBuffer, texcoord).rgb;
     float3 color = ApplyChromaticAberration(texcoord);
     
-    // Get the current adaptation value
-    float adapt = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
-    adapt = clamp(adapt, AdaptRange.x, AdaptRange.y);
+    // Get the local adaptation value
+    float localAdapt = 0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 offset = float2(x, y) * ReShade::PixelSize;
+            localAdapt += tex2D(samplerLocalAdaptation, texcoord + offset).x;
+        }
+    }
+    localAdapt /= 9.0;
+    localAdapt = clamp(localAdapt, AdaptRange.x, AdaptRange.y);
     
     // Calculate adaptive exposure for glare only
-    float adaptiveExposure = 1.0 / max(adapt, 0.0001);
+    float adaptiveExposure = 1.0 / max(localAdapt, 0.0001);
     float manualExposure = exp2(Exposure);
     float finalExposure = manualExposure * adaptiveExposure;
     
-    // Calculate glare threshold based on adaptation
-    float dynamicGlareThreshold = lerp(GlareThreshold, GlareThreshold * 3.0, saturate(adapt));
+    // Calculate glare threshold based on local adaptation
+    float dynamicGlareThreshold = lerp(GlareThreshold, GlareThreshold * 3.0, saturate(localAdapt));
     
     // Apply anisotropic veiling glare with dynamic threshold
-    float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, VeilingGlareRadius);
+    float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, VeilingGlareRadius, SmoothingRadius);
     veilingGlare = ApplySpectralFilter(veilingGlare);
     float glareIntensity = max(0, dot(veilingGlare, float3(0.299, 0.587, 0.114)) - dynamicGlareThreshold);
     veilingGlare *= glareIntensity;
@@ -407,11 +458,11 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
 
 technique EyeSight
 {
-    pass CalculateAdaptation
+    pass CalculateLocalAdaptation
     {
         VertexShader = PostProcessVS;
-        PixelShader = PS_CalculateAdaptation;
-        RenderTarget = texAdaptation;
+        PixelShader = PS_CalculateLocalAdaptation;
+        RenderTarget = texLocalAdaptation;
     }
     pass SaveAdaptation
     {
@@ -435,5 +486,11 @@ technique EyeSight
     {
         VertexShader = PostProcessVS;
         PixelShader = PS_Glare;
+    }
+    pass BlurLocalAdaptation
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_BlurLocalAdaptation;
+        RenderTarget = texLocalAdaptation;
     }
 }
