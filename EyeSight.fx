@@ -183,6 +183,12 @@ uniform bool DebugBloom <
     ui_tooltip = "Show only the bloom effect without the original image";
 > = false;
 
+uniform bool DebugAdaptation <
+    ui_label = "Debug Adaptation";
+    ui_category = "Debug";
+    ui_tooltip = "Show the current adaptation value";
+> = false;
+
 uniform float FrameTime < source = "frametime"; >;
 
 // Textures
@@ -248,20 +254,24 @@ float4 CalculateVignette(float2 texcoord, float3 color)
 float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float3 color = tex2D(BackBuffer, uv).rgb;
-    float adapt = dot(color, float3(0.299, 0.587, 0.114));
-    adapt *= AdaptationSensitivity;
+    float luminance = dot(color, float3(0.299, 0.587, 0.114));
+    float adapt = luminance * AdaptationSensitivity;
+
+    // Clamp adapt to a reasonable range
+    adapt = clamp(adapt, 0.001, 1.0);
 
     float last = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
 
-    if (AdaptationTime > 0.0)
-        adapt = lerp(last, adapt, saturate((FrameTime * 0.001) / AdaptationTime));
+    float adaptationRate = saturate((FrameTime * 0.001) / max(AdaptationTime, 0.001));
+    adapt = lerp(last, adapt, adaptationRate);
 
     return adapt;
 }
 
 float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
-    return tex2Dlod(samplerAdaptation, float4(AdaptFocalPoint, 0, AdaptMipLevels - AdaptPrecision));
+    float adapt = tex2Dlod(samplerAdaptation, float4(AdaptFocalPoint, 0, AdaptMipLevels - AdaptPrecision)).r;
+    return adapt;
 }
 
 // CA
@@ -370,6 +380,11 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     if (DebugExposedGlare)
     {
         return float4(veilingGlare * finalExposure * VeilingGlareIntensity, 1.0);
+    }
+    if (DebugAdaptation)
+    {
+        float adapt = tex2Dfetch(samplerLastAdaptation, int2(0, 0)).x;
+        return float4(adapt.xxx, 1.0);
     }
     
     // Apply vignette in normal mode
