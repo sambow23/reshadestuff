@@ -44,11 +44,6 @@ uniform float SpectralFilterStrength <
     ui_tooltip = "Strength of the spectral filter applied to the glare";
 > = 0.5;
 
-uniform bool DebugBloom <
-    ui_label = "Debug Bloom";
-    ui_tooltip = "Show only the bloom effect without the original image";
-> = false;
-
 uniform float ChromaticAberrationStrength <
     ui_type = "slider";
     ui_label = "Chromatic Aberration Strength";
@@ -161,12 +156,6 @@ uniform float VignetteOpacity <
     ui_tooltip = "Controls the overall visibility of the vignette effect";
 > = 1.0;
 
-uniform bool DebugVignette <
-    ui_label = "Debug Vignette";
-    ui_category = "Vignette";
-    ui_tooltip = "Show only the vignette effect";
-> = false;
-
 uniform float GlobalOpacity <
     ui_type = "slider";
     ui_label = "Global Opacity";
@@ -174,6 +163,25 @@ uniform float GlobalOpacity <
     ui_min = 0.0; ui_max = 1.0;
     ui_tooltip = "Controls the opacity of the shader";
 > = 1.0;
+
+uniform bool DebugExposedGlare <
+    ui_label = "Debug Exposed Glare";
+    ui_category = "Debug";
+    ui_tooltip = "Show only the exposed glare effect";
+> = false;
+
+uniform bool DebugVignette <
+    ui_label = "Debug Vignette";
+    ui_category = "Debug";
+    ui_category = "Vignette";
+    ui_tooltip = "Show only the vignette effect";
+> = false;
+
+uniform bool DebugBloom <
+    ui_label = "Debug Bloom";
+    ui_category = "Debug";
+    ui_tooltip = "Show only the bloom effect without the original image";
+> = false;
 
 uniform float FrameTime < source = "frametime"; >;
 
@@ -332,19 +340,19 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     adapt = clamp(adapt, AdaptRange.x, AdaptRange.y);
     
     // Calculate adaptive exposure
-    float exposure = exp2(Exposure) / adapt;
+    float adaptiveExposure = 1.0 / adapt;
+    float manualExposure = exp2(Exposure);
+    float finalExposure = manualExposure * adaptiveExposure;
     
     // Apply anisotropic veiling glare
     float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, SmoothingRadius);
     veilingGlare = ApplySpectralFilter(veilingGlare);
     
-    float3 finalGlare = (veilingGlare);
+    // Apply exposure to the glare
+    veilingGlare *= finalExposure;
     
-    // Apply adaptive exposure to the glare
-    veilingGlare *= exposure;
-    
-    // Combine original color with glare
-    float3 result = color + finalGlare * VeilingGlareIntensity;
+    // Combine original color with exposed glare
+    float3 result = color + veilingGlare * VeilingGlareIntensity;
     
     // Apply vignette
     float4 vignetteResult = CalculateVignette(texcoord, result);
@@ -352,12 +360,16 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     // Debug output
     if (DebugBloom)
     {
-        return float4(finalGlare, 1.0);
+        return float4(veilingGlare, 1.0);
     }
     else if (DebugVignette)
     {
         // Show only the vignette factor
         return float4(vignetteResult.aaa, 1.0);
+    }
+    if (DebugExposedGlare)
+    {
+        return float4(veilingGlare * finalExposure * VeilingGlareIntensity, 1.0);
     }
     
     // Apply vignette in normal mode
