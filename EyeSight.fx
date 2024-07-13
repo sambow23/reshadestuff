@@ -148,6 +148,14 @@ uniform float VignetteColorShift <
     ui_tooltip = "Controls the subtle color shift of the vignette (simulates chromatic aberration at edges)";
 > = 0.985;
 
+uniform float VignetteDistortionStrength <
+    ui_type = "slider";
+    ui_label = "Vignette Distortion Strength";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the strength of the lens distortion in the vignette area";
+> = 0.1;
+
 uniform float VignetteOpacity <
     ui_type = "slider";
     ui_label = "Vignette Opacity";
@@ -229,6 +237,18 @@ sampler samplerLocalAdaptation { Texture = texLocalAdaptation; };
 
 //// Shaders
 
+
+// Lens Distortion
+float2 DistortUV(float2 uv, float distortionStrength)
+{
+    float2 center = float2(0.5, 0.5);
+    float2 delta = uv - center;
+    float radius = length(delta);
+    float distortion = 1.0 + distortionStrength * pow(radius, 2.0);
+    
+    return center + delta * distortion;
+}
+
 // Vignette
 float4 CalculateVignette(float2 texcoord, float3 color)
 {
@@ -241,6 +261,10 @@ float4 CalculateVignette(float2 texcoord, float3 color)
     float vignette = smoothstep(VignetteRadius, VignetteRadius - VignetteFalloff, dist);
     vignette = pow(vignette, 1.0 + VignetteStrength * 3.0);
     
+    // Apply distortion
+    float2 distortedUV = DistortUV(texcoord, (1.0 - vignette) * VignetteDistortionStrength);
+    float3 distortedColor = tex2D(BackBuffer, distortedUV).rgb;
+    
     // Subtle color shift
     float3 vignetteColor;
     float colorShiftAmount = VignetteColorShift * 0.02;
@@ -249,12 +273,12 @@ float4 CalculateVignette(float2 texcoord, float3 color)
     vignetteColor.g = vignette;
     
     // Blend the color shift more subtly
-    float3 shiftedColor = lerp(color, color * vignetteColor, VignetteColorShift * 0.5);
+    float3 shiftedColor = lerp(distortedColor, distortedColor * vignetteColor, VignetteColorShift * 0.5);
     
     // Apply vignette darkening
     float3 vignetted = shiftedColor * lerp(1.0 - VignetteStrength, 1.0, vignette);
     
-    // Apply opacity
+    // Blend between original and distorted color based on vignette strength
     float3 finalColor = lerp(color, vignetted, VignetteOpacity);
     
     return float4(finalColor, vignette);
@@ -449,6 +473,7 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     
     // Apply vignette
     float4 vignetteResult = CalculateVignette(texcoord, result);
+    result = vignetteResult.rgb;
     
     // Debug output
     if (DebugBloom)
