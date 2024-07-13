@@ -192,10 +192,10 @@ uniform bool DebugAdaptation <
 uniform float FrameTime < source = "frametime"; >;
 
 // Textures
-texture texBrightPass { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
+texture texBrightPass { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA32F; };
 sampler samplerBrightPass { Texture = texBrightPass; };
 
-texture texVeilingGlare { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
+texture texVeilingGlare { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA32F; };
 sampler samplerVeilingGlare { Texture = texVeilingGlare; };
 
 // Adaptation Textures
@@ -347,6 +347,11 @@ float3 AnisotropicBlur(sampler s, float2 texcoord, float veilingGlareRadius, flo
 float4 PS_InitialVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
     float3 veilingGlare = AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius, SmoothingRadius);
+    
+    // Apply HDR effect to the glare
+    veilingGlare = max(veilingGlare - GlareThreshold * 0.25, 0.0);
+    veilingGlare = pow(veilingGlare, 1.5); // Reduced contrast enhancement
+    
     return float4(veilingGlare, 1.0);
 }
 
@@ -354,9 +359,21 @@ float4 PS_InitialVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOO
 float4 PS_BrightPass(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
     float3 color = tex2D(BackBuffer, texcoord).rgb;
-    float brightness = dot(color, float3(0.2126, 0.7152, 0.0722));
-    float3 brightPass = smoothstep(GlareThreshold, GlareThreshold + 0.5, brightness) * color;
-    return float4(brightPass, 1.0);
+    float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
+    
+    float threshold = GlareThreshold * 0.25; // Lower threshold
+    float softness = 0.5;
+    
+    // Preserve color ratios
+    float3 brightPass = max(0, color - threshold);
+    float brightLuminance = max(dot(brightPass, float3(0.2126, 0.7152, 0.0722)), 0.001);
+    brightPass *= luminance / brightLuminance;
+    
+    // Apply a soft knee curve
+    float knee = smoothstep(threshold, threshold + softness, luminance);
+    brightPass *= knee;
+    
+    return float4(brightPass * 8.0, 1.0); // Reduced multiplier
 }
 
 
@@ -382,6 +399,12 @@ float4 PS_BlurLocalAdaptation(float4 pos : SV_Position, float2 texcoord : TEXCOO
     adapt /= 25.0;
 
     return adapt;
+}
+
+float3 SimpleToneMap(float3 color)
+{
+    // Simple Reinhard tone mapping
+    return color / (1.0 + color);
 }
 
 // Main pass
@@ -414,11 +437,12 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     // Apply anisotropic veiling glare with dynamic threshold
     float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, VeilingGlareRadius, SmoothingRadius);
     veilingGlare = ApplySpectralFilter(veilingGlare);
-    float glareIntensity = max(0, dot(veilingGlare, float3(0.299, 0.587, 0.114)) - dynamicGlareThreshold);
-    veilingGlare *= glareIntensity;
     
     // Apply exposure to the glare
     veilingGlare *= finalExposure;
+    
+    // Tone map the glare
+    veilingGlare = SimpleToneMap(veilingGlare);
     
     // Combine original color with exposed glare
     float3 result = color + veilingGlare * VeilingGlareIntensity;
