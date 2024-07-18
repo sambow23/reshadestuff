@@ -40,6 +40,16 @@ uniform float Gamma <
     ui_step = 0.01;
 > = 1.0;
 
+uniform float GlobalOpacity <
+    ui_type = "slider";
+    ui_label = "Final Opacity";
+    ui_tooltip = "Controls the blend between the original image and the processed image. 0 = Original, 1 = Fully Processed";
+    ui_category = "Final Adjustments";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 1.0;
+
 
 // Exposure
 uniform float Exposure <
@@ -429,7 +439,8 @@ float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Ta
 // Main tonemapping pass
 float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 {
-    float4 color = tex2D(BackBuffer, texcoord);
+    float4 originalColor = tex2D(BackBuffer, texcoord);
+    float4 color = originalColor;  // Start with the original color
     float localLuminance = CalculateLocalLuminance(texcoord);
     
     float adaptedLuminance = tex2Dfetch(LastAdapt, int2(0, 0), 0).x;
@@ -467,6 +478,9 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 
     // Apply gamma correction
     color.rgb = ApplyGamma(color.rgb, Gamma);
+
+    // Blend between original and processed color based on GlobalOpacity
+    color.rgb = lerp(originalColor.rgb, color.rgb, GlobalOpacity);
 
     return saturate(color);
 }
