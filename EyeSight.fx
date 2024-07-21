@@ -12,7 +12,7 @@ sampler BackBuffer { Texture = ReShade::BackBufferTex; };
 uniform float GlareThreshold <
     ui_type = "slider";
     ui_label = "Glare Threshold";
-    ui_min = 0.0; ui_max = 2.0;
+    ui_min = 0.0; ui_max = 5.0;
     ui_tooltip = "Brightness threshold for glare effect";
 > = 0.8;
 
