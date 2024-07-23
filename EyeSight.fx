@@ -16,6 +16,13 @@ uniform float GlareThreshold <
     ui_tooltip = "Brightness threshold for glare effect";
 > = 0.8;
 
+uniform float GlareFalloff <
+    ui_type = "slider";
+    ui_label = "Glare Falloff";
+    ui_min = 0.1; ui_max = 5.0;
+    ui_tooltip = "Controls the smoothness of the glare falloff";
+> = 1.0;
+
 uniform float VeilingGlareIntensity <
     ui_type = "slider";
     ui_label = "Veiling Glare Intensity";
@@ -58,7 +65,7 @@ uniform float2 AdaptRange <
     ui_tooltip = "The minimum and maximum values that adaptation can use.";
     ui_category = "Adaptation";
     ui_min = 0.001;
-    ui_max = 1.0;
+    ui_max = 2.0;
     ui_step = 0.001;
 > = float2(0.0, 1.0);
 
@@ -80,7 +87,7 @@ uniform float AdaptationSensitivity <
     ui_min = 0.0;
     ui_max = 15.0;
     ui_step = 0.01;
-> = 10.0;
+> = 0.05;
 
 uniform int AdaptPrecision <
     ui_type = "slider";
@@ -200,11 +207,14 @@ uniform bool DebugAdaptation <
 uniform float FrameTime < source = "frametime"; >;
 
 // Textures
-texture texBrightPass { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA32F; };
+texture texBrightPass { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
 sampler samplerBrightPass { Texture = texBrightPass; };
 
-texture texVeilingGlare { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA32F; };
+texture texVeilingGlare { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
 sampler samplerVeilingGlare { Texture = texVeilingGlare; };
+
+texture texIntermediateBlur { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
+sampler samplerIntermediateBlur { Texture = texIntermediateBlur; };
 
 // Adaptation Textures
 texture texAdaptation
@@ -339,44 +349,45 @@ float3 ApplyChromaticAberration(float2 texcoord)
 
 
 // Anisotropic blur function
-float3 AnisotropicBlur(sampler s, float2 texcoord, float veilingGlareRadius, float smoothingRadius)
+float4 AnisotropicBlur(sampler s, float2 texcoord, float veilingGlareRadius, float smoothingRadius)
 {
-    float3 color = 0.0;
+    float4 color = 0.0;
     float total = 0.0;
     float combinedRadius = veilingGlareRadius + smoothingRadius;
-    int samples = min(64, ceil(combinedRadius));  // Increased max samples for better quality
+    int samples = min(128, ceil(combinedRadius * 2)); // Increased from 64 to 128
 
     for(int i = 0; i < samples; i++)
     {
         float angle = (i / float(samples)) * 3.14159 * 2.0;
-        
-        // Make the blur more horizontal
         float2 offset = float2(cos(angle), sin(angle) * (1.0 - AnisotropicAmount));
-        
-        // Use the combined radius
         offset *= combinedRadius * ReShade::PixelSize;
         
-        // Use a Gaussian-like weight based on distance
         float distance = length(offset);
         float weight = exp(-distance * distance / (2.0 * smoothingRadius * smoothingRadius));
         
-        color += tex2D(s, texcoord + offset).rgb * weight;
+        // Use bilinear sampling for smoother results
+        float4 sampleColor = tex2Dlod(s, float4(texcoord + offset, 0, 0));
+        color += sampleColor * weight;
         total += weight;
     }
     
     return color / max(total, 0.0001);
 }
 
+float4 PS_IntermediateBlur(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+{
+    return AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius * 0.5, SmoothingRadius * 0.5);
+}
+
 // Init Pass
 float4 PS_InitialVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-    float3 veilingGlare = AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius, SmoothingRadius);
+    float4 veilingGlare = AnisotropicBlur(samplerIntermediateBlur, texcoord, VeilingGlareRadius * 0.5, SmoothingRadius * 0.5);
     
-    // Apply HDR effect to the glare
-    veilingGlare = max(veilingGlare - GlareThreshold * 0.25, 0.0);
-    veilingGlare = pow(veilingGlare, 1.5); // Reduced contrast enhancement
+    veilingGlare.rgb = max(veilingGlare.rgb - GlareThreshold * 0.25, 0.0);
+    veilingGlare.rgb = pow(veilingGlare.rgb, 1.2);
     
-    return float4(veilingGlare, 1.0);
+    return veilingGlare;
 }
 
 // Bright pass shader
@@ -385,19 +396,34 @@ float4 PS_BrightPass(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_
     float3 color = tex2D(BackBuffer, texcoord).rgb;
     float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
     
-    float threshold = GlareThreshold * 0.25; // Lower threshold
+    float threshold = GlareThreshold * 0.25;
     float softness = 0.5;
     
-    // Preserve color ratios
     float3 brightPass = max(0, color - threshold);
     float brightLuminance = max(dot(brightPass, float3(0.2126, 0.7152, 0.0722)), 0.001);
     brightPass *= luminance / brightLuminance;
     
-    // Apply a soft knee curve
     float knee = smoothstep(threshold, threshold + softness, luminance);
     brightPass *= knee;
     
-    return float4(brightPass * 8.0, 1.0); // Reduced multiplier
+    return float4(brightPass * 8.0, luminance);  // Store luminance in alpha channel
+}
+
+float3 GaussianBlur(sampler s, float2 texcoord, float2 direction)
+{
+    float3 color = 0.0;
+    float offsets[3] = { 0.0, 1.3846153846, 3.2307692308 };
+    float weights[3] = { 0.2270270270, 0.3162162162, 0.0702702703 };
+    
+    color += tex2D(s, texcoord).rgb * weights[0];
+    
+    for (int i = 1; i < 3; i++)
+    {
+        color += tex2D(s, texcoord + direction * offsets[i]).rgb * weights[i];
+        color += tex2D(s, texcoord - direction * offsets[i]).rgb * weights[i];
+    }
+    
+    return color;
 }
 
 
@@ -459,17 +485,29 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     float dynamicGlareThreshold = lerp(GlareThreshold, GlareThreshold * 3.0, saturate(localAdapt));
     
     // Apply anisotropic veiling glare with dynamic threshold
-    float3 veilingGlare = AnisotropicBlur(samplerVeilingGlare, texcoord, VeilingGlareRadius, SmoothingRadius);
-    veilingGlare = ApplySpectralFilter(veilingGlare);
+    float4 veilingGlare = tex2D(samplerVeilingGlare, texcoord);
+    veilingGlare.rgb = ApplySpectralFilter(veilingGlare.rgb);
     
-    // Apply exposure to the glare
-    veilingGlare *= finalExposure;
+    // Apply exposure
+    float exposureAdjustment = log2(finalExposure);
+    veilingGlare.rgb *= exp2(exposureAdjustment * 0.5);
+
+    // Apply Gaussian blur
+    float3 blurredGlare = GaussianBlur(samplerVeilingGlare, texcoord, ReShade::PixelSize);
+    blurredGlare = ApplySpectralFilter(blurredGlare);
+    blurredGlare *= exp2(exposureAdjustment * 0.5);
+
+    // Apply tone mapping to both original and blurred glare
+    float3 toneMappedGlare = SimpleToneMap(veilingGlare.rgb);
+    float3 toneMappedBlurredGlare = SimpleToneMap(blurredGlare);
+
+    // Blend between original and blurred glare
+    veilingGlare.rgb = lerp(toneMappedGlare, toneMappedBlurredGlare, 0.5);
+
+    // Use the stored luminance to create a more accurate falloff
+    float glareIntensity = pow(veilingGlare.a, GlareFalloff);
     
-    // Tone map the glare
-    veilingGlare = SimpleToneMap(veilingGlare);
-    
-    // Combine original color with exposed glare
-    float3 result = color + veilingGlare * VeilingGlareIntensity;
+    float3 result = color + veilingGlare.rgb * VeilingGlareIntensity * glareIntensity * 0.5;
     
     // Apply vignette
     float4 vignetteResult = CalculateVignette(texcoord, result);
@@ -478,7 +516,7 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     // Debug output
     if (DebugBloom)
     {
-        return float4(veilingGlare, 1.0);
+        return float4(veilingGlare.rgb, 1.0);
     }
     else if (DebugVignette)
     {
@@ -487,7 +525,7 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     }
     if (DebugExposedGlare)
     {
-        return float4(veilingGlare * finalExposure * VeilingGlareIntensity, 1.0);
+        return float4(veilingGlare.rgb * finalExposure * VeilingGlareIntensity, 1.0);
     }
     if (DebugAdaptation)
     {
@@ -524,6 +562,12 @@ technique EyeSight
         VertexShader = PostProcessVS;
         PixelShader = PS_BrightPass;
         RenderTarget = texBrightPass;
+    }
+    pass IntermediateBlur
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_IntermediateBlur;
+        RenderTarget = texIntermediateBlur;
     }
     pass InitialVeilingGlare
     {
