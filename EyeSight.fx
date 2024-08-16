@@ -3,7 +3,7 @@
 
 #define ADAPTIVE_TONEMAPPER_SMALL_TEX_SIZE 256
 #define ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS 9
-#define GLARE_SATURATION 0.5
+#define GLARE_SATURATION 0.2
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
 // Samplers
@@ -204,12 +204,6 @@ uniform bool DebugAdaptation <
     ui_label = "Debug Adaptation";
     ui_category = "Debug";
     ui_tooltip = "Show the current adaptation value";
-> = false;
-
-uniform bool DebugRawAdaptation <
-    ui_label = "Debug Raw Adaptation";
-    ui_category = "Debug";
-    ui_tooltip = "Show the raw adaptation value before processing";
 > = false;
 
 uniform float FrameTime < source = "frametime"; >;
@@ -570,15 +564,6 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     if (DebugAdaptation)
     {
         return float4(localAdapt.xxx, 1.0);
-    }
-    if (DebugRawAdaptation)
-    {
-        return float4(localAdapt.xxx, 1.0);
-    }
-    else if (DebugAdaptation)
-    {
-        float adaptationEffect = 1.0 / (1.0 + localAdapt * AdaptationSensitivity);
-        return float4(adaptationEffect.xxx, 1.0);
     }
     
     // Apply vignette
