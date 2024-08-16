@@ -72,16 +72,6 @@ uniform float2 AdaptRange <
     ui_step = 0.001;
 > = float2(0.0, 2.0);
 
-uniform float AdaptationInfluence <
-    ui_type = "slider";
-    ui_label = "Adaptation Strength";
-    ui_category = "Adaptation";
-    ui_min = 0.0;
-    ui_max = 100.0; // Increased from 15.0
-    ui_step = 1.0;
-    ui_tooltip = "Higher values make the glare more sensitive to scene adaptation";
-> = 20.0; // 
-
 uniform float AdaptationTime <
     ui_type = "drag";
     ui_label = "Adaptation Time";
@@ -547,10 +537,9 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     localAdapt = clamp(localAdapt, AdaptRange.x, AdaptRange.y);
     
     // Calculate adaptive exposure for glare only
-    float adaptationStrength = AdaptationInfluence; // Increase this value to make adaptation more influential
     float adaptiveExposure = 0.5 / max(localAdapt, 0.001);
     float manualExposure = exp2(Exposure);
-    float glareExposure = manualExposure * adaptiveExposure * (adaptationStrength / 16);
+    float glareExposure = manualExposure * adaptiveExposure;
     
     // Apply anisotropic veiling glare
     float4 veilingGlare = tex2D(samplerVeilingGlare, texcoord);
@@ -559,7 +548,7 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     veilingGlare.rgb = AdjustSaturation(veilingGlare.rgb, GLARE_SATURATION);
     
     // Calculate glare intensity
-    float glareIntensity = pow(veilingGlare.a, GlareFalloff) * pow(1.0 - saturate(localAdapt), 1.5);
+    float glareIntensity = pow(veilingGlare.a, GlareFalloff) * pow(1.1 - saturate(localAdapt), 1.5);
     
     // Add glare to the original color
     float3 result = color + veilingGlare.rgb * VeilingGlareIntensity * glareIntensity;
