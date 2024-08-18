@@ -16,6 +16,7 @@ sampler BackBuffer { Texture = ReShade::BackBufferTex; };
 uniform float GlareFalloff <
     ui_type = "slider";
     ui_label = "Glare Falloff";
+    ui_category = "Glare";
     ui_min = 0.1; ui_max = 5.0;
     ui_tooltip = "Controls the smoothness of the glare falloff";
 > = 1.0;
@@ -23,6 +24,7 @@ uniform float GlareFalloff <
 uniform float VeilingGlareIntensity <
     ui_type = "slider";
     ui_label = "Veiling Glare Intensity";
+    ui_category = "Glare";
     ui_min = 0.0; ui_max = 10.0;
     ui_step = 0.1;
     ui_tooltip = "Intensity of the veiling glare effect";
@@ -31,6 +33,7 @@ uniform float VeilingGlareIntensity <
 uniform float BaseGlareThreshold <
     ui_type = "slider";
     ui_label = "Base Glare Threshold";
+    ui_category = "Glare";
     ui_min = 0.0; ui_max = 1.0;
     ui_tooltip = "Base threshold for glare effect before scene adaptation";
 > = 0.5;
@@ -38,6 +41,7 @@ uniform float BaseGlareThreshold <
 uniform float VeilingGlareRadius <
     ui_type = "slider";
     ui_label = "Veiling Glare Radius";
+    ui_category = "Glare";
     ui_min = 1.0; ui_max = 100.0;
     ui_tooltip = "Radius of the veiling glare effect";
 > = 50.0;
@@ -45,6 +49,7 @@ uniform float VeilingGlareRadius <
 uniform float SmoothingRadius <
     ui_type = "slider";
     ui_label = "Smoothing Radius";
+    ui_category = "Glare";
     ui_min = 1.0; ui_max = 100.0;
     ui_tooltip = "Radius of the smoothing blur applied to the veiling glare";
 > = 20.0;
@@ -52,6 +57,7 @@ uniform float SmoothingRadius <
 uniform float SpectralFilterStrength <
     ui_type = "slider";
     ui_label = "Spectral Filter Strength";
+    ui_category = "Glare";
     ui_min = 0.0; ui_max = 1.0;
     ui_tooltip = "Strength of the spectral filter applied to the glare";
 > = 0.5;
@@ -61,9 +67,60 @@ uniform float SpectralFilterStrength <
 uniform float ChromaticAberrationStrength <
     ui_type = "slider";
     ui_label = "Chromatic Aberration Strength";
+    ui_category = "CA";
     ui_min = 0.0; ui_max = 10.0;
     ui_tooltip = "Strength of the chromatic aberration effect";
 > = 0.25;
+
+// Vignette
+
+uniform float VignetteStrength <
+    ui_type = "slider";
+    ui_label = "Vignette Strength";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.5;
+    ui_tooltip = "Controls the intensity of the vignette effect";
+> = 0.6;
+
+uniform float VignetteRadius <
+    ui_type = "slider";
+    ui_label = "Vignette Radius";
+    ui_category = "Vignette";
+    ui_min = 0.5; ui_max = 2.5;
+    ui_tooltip = "Controls the size of the vignette effect (larger values cover more of the screen)";
+> = 2.0;
+
+uniform float VignetteFalloff <
+    ui_type = "slider";
+    ui_label = "Vignette Falloff";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1;
+    ui_tooltip = "Controls the falloff of the vignette effect";
+> = 0.136;
+
+uniform float VignetteColorShift <
+    ui_type = "slider";
+    ui_label = "Vignette Color Shift";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.5;
+    ui_tooltip = "Controls the subtle color shift of the vignette (simulates chromatic aberration at edges)";
+> = 0.985;
+
+uniform float VignetteDistortionStrength <
+    ui_type = "slider";
+    ui_label = "Vignette Distortion Strength";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the strength of the lens distortion in the vignette area";
+> = 0.1;
+
+uniform float VignetteOpacity <
+    ui_type = "slider";
+    ui_label = "Vignette Opacity";
+    ui_category = "Vignette";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the overall visibility of the vignette effect";
+> = 1.0;
 
 // Adaptation
 uniform bool EnableAdaptation <
@@ -121,7 +178,7 @@ uniform float2 AdaptFocalPoint <
     ui_step = 0.001;
 > = 0.5;
 
-// Misc
+// Final Changes
 
 uniform float Exposure <
     ui_type = "slider";
@@ -145,56 +202,6 @@ uniform float GlobalOpacity <
     ui_category = "Final Changes";
     ui_min = 0.0; ui_max = 1.0;
     ui_tooltip = "Controls the opacity of the shader";
-> = 1.0;
-
-// Vignette
-
-uniform float VignetteStrength <
-    ui_type = "slider";
-    ui_label = "Vignette Strength";
-    ui_category = "Vignette";
-    ui_min = 0.0; ui_max = 1.5;
-    ui_tooltip = "Controls the intensity of the vignette effect";
-> = 0.6;
-
-uniform float VignetteRadius <
-    ui_type = "slider";
-    ui_label = "Vignette Radius";
-    ui_category = "Vignette";
-    ui_min = 0.5; ui_max = 2.5;
-    ui_tooltip = "Controls the size of the vignette effect (larger values cover more of the screen)";
-> = 2.0;
-
-uniform float VignetteFalloff <
-    ui_type = "slider";
-    ui_label = "Vignette Falloff";
-    ui_category = "Vignette";
-    ui_min = 0.0; ui_max = 1;
-    ui_tooltip = "Controls the falloff of the vignette effect";
-> = 0.136;
-
-uniform float VignetteColorShift <
-    ui_type = "slider";
-    ui_label = "Vignette Color Shift";
-    ui_category = "Vignette";
-    ui_min = 0.0; ui_max = 1.5;
-    ui_tooltip = "Controls the subtle color shift of the vignette (simulates chromatic aberration at edges)";
-> = 0.985;
-
-uniform float VignetteDistortionStrength <
-    ui_type = "slider";
-    ui_label = "Vignette Distortion Strength";
-    ui_category = "Vignette";
-    ui_min = 0.0; ui_max = 1.0;
-    ui_tooltip = "Controls the strength of the lens distortion in the vignette area";
-> = 0.1;
-
-uniform float VignetteOpacity <
-    ui_type = "slider";
-    ui_label = "Vignette Opacity";
-    ui_category = "Vignette";
-    ui_min = 0.0; ui_max = 1.0;
-    ui_tooltip = "Controls the overall visibility of the vignette effect";
 > = 1.0;
 
 // Debug
