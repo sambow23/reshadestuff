@@ -9,7 +9,9 @@ static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 // Samplers
 sampler BackBuffer { Texture = ReShade::BackBufferTex; };
 
-// Parameters
+//// Parameters
+
+// Glare
 
 uniform float GlareFalloff <
     ui_type = "slider";
@@ -22,7 +24,7 @@ uniform float VeilingGlareIntensity <
     ui_type = "slider";
     ui_label = "Veiling Glare Intensity";
     ui_min = 0.0; ui_max = 10.0;
-    ui_step = 1.0;
+    ui_step = 0.1;
     ui_tooltip = "Intensity of the veiling glare effect";
 > = 1.0;
 
@@ -54,6 +56,8 @@ uniform float SpectralFilterStrength <
     ui_tooltip = "Strength of the spectral filter applied to the glare";
 > = 0.5;
 
+// CA
+
 uniform float ChromaticAberrationStrength <
     ui_type = "slider";
     ui_label = "Chromatic Aberration Strength";
@@ -62,6 +66,12 @@ uniform float ChromaticAberrationStrength <
 > = 0.25;
 
 // Adaptation
+uniform bool EnableAdaptation <
+    ui_label = "Enable Adaptation";
+    ui_tooltip = "Toggle to enable or disable the adaptation effect";
+    ui_category = "Adaptation";
+> = true;
+
 uniform float2 AdaptRange <
     ui_type = "drag";
     ui_label = "Adaptation Range";
@@ -90,7 +100,7 @@ uniform float AdaptationSensitivity <
     ui_min = 0.0;
     ui_max = 50.0; // Increased from 15.0
     ui_step = 0.1;
-> = 5.0; // 
+> = 5.0;
 
 uniform int AdaptPrecision <
     ui_type = "slider";
@@ -111,6 +121,8 @@ uniform float2 AdaptFocalPoint <
     ui_step = 0.001;
 > = 0.5;
 
+// Misc
+
 uniform float Exposure <
     ui_type = "slider";
     ui_label = "Exposure";
@@ -121,10 +133,21 @@ uniform float Exposure <
 
 uniform float AnisotropicAmount <
     ui_type = "slider";
+    ui_category = "Final Changes";
     ui_label = "Anisotropic Amount";
     ui_min = 0.0; ui_max = 1.0;
     ui_tooltip = "Controls the strength of horizontal glare. Higher values make the glare more horizontal.";
 > = 0.5;
+
+uniform float GlobalOpacity <
+    ui_type = "slider";
+    ui_label = "Global Opacity";
+    ui_category = "Final Changes";
+    ui_min = 0.0; ui_max = 1.0;
+    ui_tooltip = "Controls the opacity of the shader";
+> = 1.0;
+
+// Vignette
 
 uniform float VignetteStrength <
     ui_type = "slider";
@@ -174,13 +197,7 @@ uniform float VignetteOpacity <
     ui_tooltip = "Controls the overall visibility of the vignette effect";
 > = 1.0;
 
-uniform float GlobalOpacity <
-    ui_type = "slider";
-    ui_label = "Global Opacity";
-    ui_category = "Final Changes";
-    ui_min = 0.0; ui_max = 1.0;
-    ui_tooltip = "Controls the opacity of the shader";
-> = 1.0;
+// Debug
 
 uniform bool DebugExposedGlare <
     ui_label = "Debug Exposed Glare";
@@ -242,12 +259,12 @@ texture texLocalAdaptation
 {
     Width = BUFFER_WIDTH / 1;
     Height = BUFFER_HEIGHT / 1;
-    Format = R32F;
+    Format = R16F;
     MipLevels = 1;
 };
 sampler samplerLocalAdaptation { Texture = texLocalAdaptation; };
 
-texture texIntermediateAdaptation { Width = BUFFER_WIDTH / 8; Height = BUFFER_HEIGHT / 8; Format = R32F; };
+texture texIntermediateAdaptation { Width = BUFFER_WIDTH / 8; Height = BUFFER_HEIGHT / 8; Format = R16F; };
 sampler samplerIntermediateAdaptation { Texture = texIntermediateAdaptation; };
 
 //// Shaders
@@ -307,7 +324,13 @@ float4 CalculateVignette(float2 texcoord, float3 color)
 // Adaptation
 float4 PS_CalculateLocalAdaptation(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-    float2 texelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
+    if (!EnableAdaptation)
+    {
+        // Return a default adaptation value when disabled
+        return VeilingGlareIntensity;
+    }
+
+    float2 texelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT) * 8;
     float4 brightPassData = tex2D(samplerBrightPass, texcoord);
     float packedData = brightPassData.a;
     float avgLuminance = floor(packedData) / 1000;
@@ -315,34 +338,31 @@ float4 PS_CalculateLocalAdaptation(float4 pos : SV_Position, float2 texcoord : T
 
     float adapt = 0;
     float totalWeight = 0;
+    const float kernelScale = 16.0; // Gaussian distribution scale factor
 
     for (int y = -4; y <= 4; y++)
     {
         for (int x = -4; x <= 4; x++)
         {
-            float2 offset = float2(x, y) * texelSize * 8;
-            float weight = exp(-(x*x + y*y) / 16.0);  // Gaussian-like weight
+            float2 offset = float2(x, y) * texelSize;
+            float weight = exp(-(x*x + y*y) / kernelScale);  // Gaussian-like weight, with precomputed scale
             float4 neighborData = tex2D(samplerBrightPass, texcoord + offset);
             float neighborLuminance = floor(neighborData.a) / 1000;
             adapt += neighborLuminance * weight;
             totalWeight += weight;
         }
     }
-    adapt /= max(totalWeight, 0.001);
+    adapt /= max(totalWeight, 0.001); // Prevent division by zero
 
+    // Compress and clamp the luminance according to adaptive sensitivity
     float compressedLuminance = 1.0 - exp(-adapt * AdaptationSensitivity);
     adapt = clamp(compressedLuminance, 0.0001, 0.9999);
 
+    // Interpolate between the current and the new adapted value to smooth transitions
     float last = tex2D(samplerLocalAdaptation, texcoord).x;
     float adaptationRate = saturate((FrameTime * 0.001) / max(AdaptationTime, 0.001));
     adapt = lerp(last, adapt, adaptationRate);
 
-    return adapt;
-}
-
-float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
-{
-    float adapt = tex2Dlod(samplerAdaptation, float4(AdaptFocalPoint, 0, AdaptMipLevels - AdaptPrecision)).r;
     return adapt;
 }
 
@@ -351,15 +371,21 @@ float3 ApplyChromaticAberration(float2 texcoord)
 {
     float2 direction = texcoord - 0.5;
     float distanceFromCenter = length(direction);
-    
-    float redOffset = ChromaticAberrationStrength * 0.01 * distanceFromCenter;
-    float blueOffset = ChromaticAberrationStrength * -0.01 * distanceFromCenter;
-    
+
+    // Calculate the offset amount once and scale it for red and blue
+    float baseOffset = ChromaticAberrationStrength * 0.01 * distanceFromCenter;
+    float redOffset = baseOffset;
+    float blueOffset = -baseOffset;
+
+    // Get the distortions along calculated red and blue offsets
+    float2 redTexcoord = texcoord + direction * redOffset;
+    float2 blueTexcoord = texcoord + direction * blueOffset;
+
     float3 distortedColor;
-    distortedColor.r = tex2D(BackBuffer, texcoord + direction * redOffset).r;
+    distortedColor.r = tex2D(BackBuffer, redTexcoord).r;
     distortedColor.g = tex2D(BackBuffer, texcoord).g;
-    distortedColor.b = tex2D(BackBuffer, texcoord + direction * blueOffset).b;
-    
+    distortedColor.b = tex2D(BackBuffer, blueTexcoord).b;
+
     return distortedColor;
 }
 
@@ -506,19 +532,25 @@ float3 GaussianBlur(sampler s, float2 texcoord, float2 direction)
 float4 PS_BlurLocalAdaptation(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
     float adapt = 0;
+    // Precompute the texelSize adjustments
     float2 texelSize = 1.0 / float2(BUFFER_WIDTH / 8, BUFFER_HEIGHT / 8);
+    // Reduce constant calculations like: fixed divisor 1/25 => 0.04
+    const float weight = 0.04;
 
-    for (int y = -2; y <= 2; y++)
+    // Cache the base texture coordinates and multiply offsets once
+    float2 baseTC = texcoord - 2.0 * texelSize;
+    for (int y = 0; y < 5; y++)
     {
-        for (int x = -2; x <= 2; x++)
+        for (int x = 0; x < 5; x++)
         {
-            float2 offset = float2(x, y) * texelSize;
-            adapt += tex2D(samplerIntermediateAdaptation, texcoord + offset).x;
+            float2 currentOffset = float2(x, y) * texelSize;
+            float2 sampleTC = baseTC + currentOffset;
+            adapt += tex2D(samplerIntermediateAdaptation, sampleTC).x;
         }
     }
-    adapt /= 25.0;
-
-    return adapt;
+    adapt *= weight;
+    
+    return float4(adapt, adapt, adapt, 1.0);
 }
 
 float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
@@ -527,7 +559,7 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     float3 color = ApplyChromaticAberration(texcoord);
     
     // Get the local adaptation value
-    float localAdapt = tex2D(samplerLocalAdaptation, texcoord).x;
+    float localAdapt = EnableAdaptation ? tex2D(samplerLocalAdaptation, texcoord).x : 0.5; // Use a default value when disabled
     localAdapt = clamp(localAdapt, AdaptRange.x, AdaptRange.y);
     
     // Calculate adaptive exposure for glare only
@@ -579,18 +611,6 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
 
 technique EyeSight
 {
-    pass CalculateLocalAdaptation
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_CalculateLocalAdaptation;
-        RenderTarget = texIntermediateAdaptation;
-    }
-    pass SaveAdaptation
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_SaveAdaptation;
-        RenderTarget = texLastAdaptation;
-    }
     pass BrightPass
     {
         VertexShader = PostProcessVS;
@@ -619,5 +639,11 @@ technique EyeSight
         VertexShader = PostProcessVS;
         PixelShader = PS_BlurLocalAdaptation;
         RenderTarget = texLocalAdaptation;
+    }
+    pass CalculateLocalAdaptation
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_CalculateLocalAdaptation;
+        RenderTarget = texIntermediateAdaptation;
     }
 }
