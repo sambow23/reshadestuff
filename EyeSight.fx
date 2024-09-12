@@ -40,15 +40,15 @@ uniform float BaseGlareThreshold <
 
 uniform float VeilingGlareRadius <
     ui_type = "slider";
-    ui_label = "Veiling Glare Radius";
+    ui_label = "Veiling Glare Blur Radius";
     ui_category = "Glare";
     ui_min = 1.0; ui_max = 100.0;
-    ui_tooltip = "Radius of the veiling glare effect";
+    ui_tooltip = "Radius of the veiling glare blur effect";
 > = 50.0;
 
 uniform float SmoothingRadius <
     ui_type = "slider";
-    ui_label = "Smoothing Radius";
+    ui_label = "VG Blur Smoothing Radius";
     ui_category = "Glare";
     ui_min = 1.0; ui_max = 100.0;
     ui_tooltip = "Radius of the smoothing blur applied to the veiling glare";
@@ -66,7 +66,7 @@ uniform float SpectralFilterStrength <
 
 uniform float ChromaticAberrationStrength <
     ui_type = "slider";
-    ui_label = "Chromatic Aberration Strength";
+    ui_label = "Chromatic Aberration";
     ui_category = "CA";
     ui_min = 0.0; ui_max = 10.0;
     ui_tooltip = "Strength of the chromatic aberration effect";

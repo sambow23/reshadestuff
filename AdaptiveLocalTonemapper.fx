@@ -352,7 +352,8 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     const float D = 0.59;
     const float E = 0.14;
 
-    float adaptationFactor = max(adaptedLuminance, 0.001);
+    float minAdaptation = max(0.001, adaptedLuminance * 0.1);
+    float adaptationFactor = max(adaptedLuminance, minAdaptation);
     float3 adaptedColor = color / adaptationFactor;
 
     // Convert to Lab space
@@ -364,8 +365,8 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float adjustmentRange = lerp(0.1, 2.0, saturate(dynamicRange / 10.0));
 
     // Local adaptation with curve
-    float localAdaptation = pow(localLuminance / adaptationFactor, LocalAdjustmentCurve);
-    localAdaptation = lerp(1.0, localAdaptation, LocalAdjustmentStrength * adjustmentRange);
+    float localAdaptation = pow(saturate(localLuminance / adaptationFactor), LocalAdjustmentCurve);
+    localAdaptation = lerp(1.0, localAdaptation, LocalAdjustmentStrength);
 
     // Apply local adjustment to L channel
     labColor.x *= localAdaptation;
@@ -374,7 +375,7 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float3 adjustedColor = Lab2RGB(labColor);
 
     // Soft clipping to prevent harsh clipping
-    adjustedColor = 1.0 - exp(-adjustedColor);
+    adjustedColor = adjustedColor / (adjustedColor + 1.0);
 
     // Calculate luminance
     float luminance = dot(adjustedColor, float3(0.2126, 0.7152, 0.0722));
@@ -404,8 +405,8 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
                            midtoneWeight * MidtoneAdjustment + 
                            highlightWeight * HighlightAdjustment;
 
-    // Blend between original and tonemapped based on zonal intensities
-    return lerp(adjustedColor, toneMapped, intensity * zonalIntensity);
+float blendFactor = smoothstep(0.0, 1.0, intensity * zonalIntensity);
+return lerp(adjustedColor, toneMapped, blendFactor);
 }
 
 // Apply Gamma Correction
@@ -419,17 +420,28 @@ float3 ApplyGamma(float3 color, float gamma) {
 
 // Calculate adaptation values
 float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
+    // Fetch current color and compute luminance
     float3 color = tex2D(BackBuffer, uv).rgb;
-    float adapt = dot(color, float3(0.299, 0.587, 0.114));
-    adapt *= AdaptSensitivity;
+    float currentAdapt = dot(color, float3(0.299, 0.587, 0.114));
+    currentAdapt *= AdaptSensitivity;
 
-    float last = tex2Dfetch(LastAdapt, int2(0, 0), 0).x;
+    // Fetch the last adaptation value
+    float lastAdapt = tex2Dfetch(LastAdapt, int2(0, 0), 0).x;
 
+    // Calculate the smoothing factor alpha using EMA
+    float alpha = 0.0;
     if (AdaptTime > 0.0)
-        adapt = lerp(last, adapt, saturate((FrameTime * 0.001) / AdaptTime));
+        alpha = 1.0 - exp(- (FrameTime * 0.001) / AdaptTime);
+    else
+        alpha = 1.0; // Immediate adaptation if AdaptTime is zero
 
+    // Compute the new adaptation value using EMA
+    float adapt = lerp(lastAdapt, currentAdapt, alpha);
+
+    // Return the adapted luminance value
     return adapt;
 }
+
 
 // Save adaptation values
 float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
