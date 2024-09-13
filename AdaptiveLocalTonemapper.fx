@@ -352,8 +352,7 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     const float D = 0.59;
     const float E = 0.14;
 
-    float minAdaptation = max(0.001, adaptedLuminance * 0.1);
-    float adaptationFactor = max(adaptedLuminance, minAdaptation);
+    float adaptationFactor = max(adaptedLuminance, 0.001);
     float3 adaptedColor = color / adaptationFactor;
 
     // Convert to Lab space
@@ -365,8 +364,8 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float adjustmentRange = lerp(0.1, 2.0, saturate(dynamicRange / 10.0));
 
     // Local adaptation with curve
-    float localAdaptation = pow(saturate(localLuminance / adaptationFactor), LocalAdjustmentCurve);
-    localAdaptation = lerp(1.0, localAdaptation, LocalAdjustmentStrength);
+    float localAdaptation = pow(localLuminance / adaptationFactor, LocalAdjustmentCurve);
+    localAdaptation = lerp(1.0, localAdaptation, LocalAdjustmentStrength * adjustmentRange);
 
     // Apply local adjustment to L channel
     labColor.x *= localAdaptation;
@@ -375,7 +374,7 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     float3 adjustedColor = Lab2RGB(labColor);
 
     // Soft clipping to prevent harsh clipping
-    adjustedColor = adjustedColor / (adjustedColor + 1.0);
+    adjustedColor = 1.0 - exp(-adjustedColor);
 
     // Calculate luminance
     float luminance = dot(adjustedColor, float3(0.2126, 0.7152, 0.0722));
@@ -405,8 +404,8 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
                            midtoneWeight * MidtoneAdjustment + 
                            highlightWeight * HighlightAdjustment;
 
-float blendFactor = smoothstep(0.0, 1.0, intensity * zonalIntensity);
-return lerp(adjustedColor, toneMapped, blendFactor);
+    // Blend between original and tonemapped based on zonal intensities
+    return lerp(adjustedColor, toneMapped, intensity * zonalIntensity);
 }
 
 // Apply Gamma Correction

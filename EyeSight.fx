@@ -13,6 +13,23 @@ sampler BackBuffer { Texture = ReShade::BackBufferTex; };
 
 // Glare
 
+// Glare Shape Parameters
+uniform int GlareShapeRays <
+    ui_type = "slider";
+    ui_label = "Glare Shape Rays";
+    ui_category = "Glare";
+    ui_min = 3; ui_max = 12;
+    ui_tooltip = "Number of rays in the glare shape (e.g., 4 for a cross, 6 for a star).";
+> = 6;
+
+uniform float GlareAttenuation <
+    ui_type = "slider";
+    ui_label = "Glare Attenuation";
+    ui_category = "Glare";
+    ui_min = 0.5; ui_max = 5.0;
+    ui_tooltip = "Controls the sharpness of the glare rays.";
+> = 2.0;
+
 uniform float GlareFalloff <
     ui_type = "slider";
     ui_label = "Glare Falloff";
@@ -20,6 +37,15 @@ uniform float GlareFalloff <
     ui_min = 0.1; ui_max = 5.0;
     ui_tooltip = "Controls the smoothness of the glare falloff";
 > = 1.0;
+
+uniform float BlurRadius <
+    ui_type = "slider";
+    ui_label = "Blur Radius";
+    ui_category = "Glare";
+    ui_min = 1.0; ui_max = 10.0;
+    ui_tooltip = "Controls the radius of the Gaussian blur applied to the glare.";
+> = 5.0;
+
 
 uniform float VeilingGlareIntensity <
     ui_type = "slider";
@@ -242,6 +268,10 @@ sampler samplerVeilingGlare { Texture = texVeilingGlare; };
 texture texIntermediateBlur { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
 sampler samplerIntermediateBlur { Texture = texIntermediateBlur; };
 
+texture texBlurredGlare { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16F; };
+sampler samplerBlurredGlare { Texture = texBlurredGlare; };
+
+
 // Adaptation Textures
 texture texAdaptation
 {
@@ -275,6 +305,16 @@ texture texIntermediateAdaptation { Width = BUFFER_WIDTH / 8; Height = BUFFER_HE
 sampler samplerIntermediateAdaptation { Texture = texIntermediateAdaptation; };
 
 //// Shaders
+
+
+// Function to generate a procedural glare shape (starburst pattern)
+float GenerateGlareShape(float2 dir, int numRays, float attenuation)
+{
+    float angle = atan2(dir.y, dir.x);
+    float spike = cos(angle * numRays);
+    float spikeIntensity = pow(abs(spike), attenuation);
+    return spikeIntensity;
+}
 
 float3 AdjustSaturation(float3 color, float saturationFactor)
 {
@@ -397,35 +437,44 @@ float3 ApplyChromaticAberration(float2 texcoord)
 }
 
 
-// Anisotropic blur function
-float4 AnisotropicBlur(sampler s, float2 texcoord, float veilingGlareRadius, float smoothingRadius)
+// Modified Anisotropic Blur function with dynamic glare shapes
+float4 DynamicAnisotropicBlur(sampler s, float2 texcoord, float veilingGlareRadius, float smoothingRadius, int numRays, float attenuation)
 {
     float4 color = 0.0;
-    float total = 0.0;
+    float totalWeight = 0.0;
     float combinedRadius = veilingGlareRadius + smoothingRadius;
-    int samples = min(128, ceil(combinedRadius * 2)); // Increased from 64 to 128
+    int samples = min(128, ceil(combinedRadius * 4)); // Increased number of samples
 
     for(int i = 0; i < samples; i++)
     {
-        float angle = (i / float(samples)) * 3.14159 * 2.0;
-        float2 offset = float2(cos(angle), sin(angle) * (1.0 - AnisotropicAmount));
-        offset *= combinedRadius * ReShade::PixelSize;
-        
+        float angle = (i / float(samples)) * 6.28318; // 2 * PI
+        float2 dir = float2(cos(angle), sin(angle) * (1.0 - AnisotropicAmount));
+
+        // Generate glare shape weight
+        float shapeWeight = GenerateGlareShape(dir, GlareShapeRays, GlareAttenuation);
+
+        // Calculate offset
+        float2 offset = dir * combinedRadius * ReShade::PixelSize * (i / float(samples)); // Distribute samples along the radius
+
+        // Gaussian weight based on distance
         float distance = length(offset);
         float weight = exp(-distance * distance / (2.0 * smoothingRadius * smoothingRadius));
-        
-        // Use bilinear sampling for smoother results
+
+        // Combine weights
+        float finalWeight = weight * shapeWeight;
+
+        // Sample the texture
         float4 sampleColor = tex2Dlod(s, float4(texcoord + offset, 0, 0));
-        color += sampleColor * weight;
-        total += weight;
+        color += sampleColor * finalWeight;
+        totalWeight += finalWeight;
     }
-    
-    return color / max(total, 0.0001);
+
+    return color / max(totalWeight, 0.0001);
 }
 
 float4 PS_IntermediateBlur(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-    return AnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius * 0.5, SmoothingRadius * 0.5);
+    return DynamicAnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius * 0.5, SmoothingRadius * 0.5, GlareShapeRays, GlareAttenuation);
 }
 
 float3 ApplySpectralFilter(float3 color)
@@ -446,95 +495,84 @@ float CalculateDynamicThreshold(float2 texcoord)
 float4 PS_InitialVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
     // Get the local adaptation value
-    float localAdapt = tex2D(samplerLocalAdaptation, texcoord).x;
-    
-    // Adjust glare threshold based on local adaptation
-    float dynamicThreshold = CalculateDynamicThreshold(texcoord);
-    
-    // Apply anisotropic blur
-    float4 veilingGlare = AnisotropicBlur(samplerIntermediateBlur, texcoord, VeilingGlareRadius * 0.5, SmoothingRadius * 0.5);
-    
+    float localAdapt = EnableAdaptation ? tex2D(samplerLocalAdaptation, texcoord).x : 0.5;
+
+    // Apply dynamic anisotropic blur with glare shape
+    float4 veilingGlare = DynamicAnisotropicBlur(samplerBrightPass, texcoord, VeilingGlareRadius * 0.5, SmoothingRadius * 0.5, GlareShapeRays, GlareAttenuation);
+
     // Apply dynamic threshold
+    float dynamicThreshold = CalculateDynamicThreshold(texcoord);
     veilingGlare.rgb = max(veilingGlare.rgb - dynamicThreshold, 0.0);
-    
+
     // Adjust glare intensity based on adaptation
     dynamicThreshold *= lerp(1.0, 3.0, saturate(localAdapt));
-    
+
     // Apply spectral filter
     veilingGlare.rgb = ApplySpectralFilter(veilingGlare.rgb);
-    
+
+    // Tint the glare with the colors from the bright pass
+    float3 brightColor = tex2D(samplerBrightPass, texcoord).rgb;
+    veilingGlare.rgb *= normalize(brightColor + 0.0001);
+
     // Store luminance in alpha channel for later use
     veilingGlare.a = dot(veilingGlare.rgb, float3(0.299, 0.587, 0.114));
-    
+
     return veilingGlare;
 }
+
+
 
 // Bright pass shader
 float4 PS_BrightPass(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
     float3 color = tex2D(BackBuffer, texcoord).rgb;
     float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
-    
+
     float dynamicThreshold = CalculateDynamicThreshold(texcoord);
     float softness = dynamicThreshold * 0.5;
-    
+
     float3 brightPass = max(0, color - dynamicThreshold);
     float brightLuminance = max(dot(brightPass, float3(0.2126, 0.7152, 0.0722)), 0.001);
     brightPass *= luminance / brightLuminance;
-    
+
     float knee = smoothstep(dynamicThreshold, dynamicThreshold + softness, luminance);
     brightPass *= knee;
-    
-    // Calculate average scene luminance
-    float avgLuminance = 0;
-    float2 texelSize = 1.0 / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-    for (int y = -2; y <= 2; y++)
-    {
-        for (int x = -2; x <= 2; x++)
-        {
-            float2 offset = float2(x, y) * texelSize * 4; // Sample a wider area
-            avgLuminance += dot(tex2D(BackBuffer, texcoord + offset).rgb, float3(0.2126, 0.7152, 0.0722));
-        }
-    }
-    avgLuminance /= 25.0; // 5x5 samples
-    
-    // Calculate local contrast
-    float localContrast = 0;
-    float mean = luminance;
-    for (int y = -1; y <= 1; y++)
-    {
-        for (int x = -1; x <= 1; x++)
-        {
-            float2 offset = float2(x, y) * texelSize;
-            float sampleLum = dot(tex2D(BackBuffer, texcoord + offset).rgb, float3(0.2126, 0.7152, 0.0722));
-            localContrast += (sampleLum - mean) * (sampleLum - mean);
-        }
-    }
-    localContrast = sqrt(localContrast / 9.0); // Standard deviation as a measure of contrast
-    
-    // Pack avgLuminance and localContrast into a single float
-    float packedData = (avgLuminance * 1000) + localContrast; // Assuming avgLuminance < 1
 
-    return float4(brightPass, packedData);
+    // Return bright colors directly for tinting
+    return float4(brightPass, 1.0);
 }
 
-float3 GaussianBlur(sampler s, float2 texcoord, float2 direction)
+// Gaussian Blur Function
+float4 GaussianBlur(sampler s, float2 texcoord, float2 direction, float radius)
 {
-    float3 color = 0.0;
-    float offsets[3] = { 0.0, 1.3846153846, 3.2307692308 };
-    float weights[3] = { 0.2270270270, 0.3162162162, 0.0702702703 };
-    
-    color += tex2D(s, texcoord).rgb * weights[0];
-    
-    for (int i = 1; i < 3; i++)
+    float4 color = 0.0;
+    float totalWeight = 0.0;
+    int samples = 5; // Number of samples on each side
+
+    for (int i = -samples; i <= samples; i++)
     {
-        color += tex2D(s, texcoord + direction * offsets[i]).rgb * weights[i];
-        color += tex2D(s, texcoord - direction * offsets[i]).rgb * weights[i];
+        float offset = i * radius;
+        float2 sampleCoord = texcoord + direction * offset * ReShade::PixelSize;
+        float weight = exp(-0.5 * (offset / radius) * (offset / radius));
+
+        color += tex2D(s, sampleCoord) * weight;
+        totalWeight += weight;
     }
-    
-    return color;
+
+    return color / totalWeight;
 }
 
+float4 PS_BlurVeilingGlare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+{
+    // First, apply horizontal blur
+    float4 blurredH = GaussianBlur(samplerVeilingGlare, texcoord, float2(1.0, 0.0), BlurRadius);
+
+    // Then, apply vertical blur
+    float4 blurredHV = GaussianBlur(samplerVeilingGlare, texcoord, float2(0.0, 1.0), BlurRadius);
+
+    // Combine the results
+    return (blurredH + blurredHV) * 0.5;
+}
 
 float4 PS_BlurLocalAdaptation(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
@@ -564,28 +602,28 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
 {
     float3 originalColor = tex2D(BackBuffer, texcoord).rgb;
     float3 color = ApplyChromaticAberration(texcoord);
-    
+
     // Get the local adaptation value
-    float localAdapt = EnableAdaptation ? tex2D(samplerLocalAdaptation, texcoord).x : 0.5; // Use a default value when disabled
+    float localAdapt = EnableAdaptation ? tex2D(samplerLocalAdaptation, texcoord).x : 0.5;
     localAdapt = clamp(localAdapt, AdaptRange.x, AdaptRange.y);
-    
+
     // Calculate adaptive exposure for glare only
     float adaptiveExposure = 0.5 / max(localAdapt, 0.001);
     float manualExposure = exp2(Exposure);
     float glareExposure = manualExposure * adaptiveExposure;
-    
-    // Apply anisotropic veiling glare
-    float4 veilingGlare = tex2D(samplerVeilingGlare, texcoord);
-    
+
+    // Use the blurred glare texture
+    float4 veilingGlare = tex2D(samplerBlurredGlare, texcoord);
+
     // Adjust saturation of the glare
     veilingGlare.rgb = AdjustSaturation(veilingGlare.rgb, GLARE_SATURATION);
-    
+
     // Calculate glare intensity
     float glareIntensity = pow(veilingGlare.a, GlareFalloff) * pow(1.1 - saturate(localAdapt), 1.5);
-    
+
     // Add glare to the original color
     float3 result = color + veilingGlare.rgb * VeilingGlareIntensity * glareIntensity;
-    
+
     // Debug output
     if (DebugBloom)
     {
@@ -604,16 +642,17 @@ float4 PS_Glare(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     {
         return float4(localAdapt.xxx, 1.0);
     }
-    
+
     // Apply vignette
     float4 vignetteResult = CalculateVignette(texcoord, result);
     result = vignetteResult.rgb;
-    
+
     // Apply global opacity
     result = lerp(originalColor, result, GlobalOpacity);
-    
+
     return float4(result, 1.0);
 }
+
 
 
 technique EyeSight
@@ -635,6 +674,12 @@ technique EyeSight
         VertexShader = PostProcessVS;
         PixelShader = PS_InitialVeilingGlare;
         RenderTarget = texVeilingGlare;
+    }
+    pass BlurVeilingGlare
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_BlurVeilingGlare;
+        RenderTarget = texBlurredGlare;
     }
     pass FinalGlare
     {
