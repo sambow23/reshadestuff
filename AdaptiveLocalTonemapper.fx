@@ -50,7 +50,6 @@ uniform float GlobalOpacity <
     ui_step = 0.01;
 > = 1.0;
 
-
 // Exposure
 uniform float Exposure <
     ui_type = "slider";
@@ -178,6 +177,23 @@ uniform float MidtonesWidth <
 > = 0.4;
 
 // Adaptation
+uniform bool EnableAdaptation <
+    ui_type = "checkbox";
+    ui_label = "Enable Adaptation";
+    ui_tooltip = "Toggle adaptive tonemapping on/off. When off, static tonemapping is used.";
+    ui_category = "Adaptation";
+> = true;
+
+uniform float FixedLuminance <
+    ui_type = "slider";
+    ui_label = "Fixed Luminance";
+    ui_tooltip = "The fixed luminance value to use when adaptation is disabled. 0.18 is middle gray.";
+    ui_category = "Adaptation";
+    ui_min = 0.01;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.18;
+
 uniform float2 AdaptRange <
     ui_type = "drag";
     ui_label = "Adaptation Range";
@@ -454,8 +470,17 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     float4 color = originalColor;  // Start with the original color
     float localLuminance = CalculateLocalLuminance(texcoord);
     
-    float adaptedLuminance = tex2Dfetch(LastAdapt, int2(0, 0), 0).x;
-    adaptedLuminance = clamp(adaptedLuminance, AdaptRange.x, AdaptRange.y);
+    float adaptedLuminance;
+    if (EnableAdaptation)
+    {
+        adaptedLuminance = tex2Dfetch(LastAdapt, int2(0, 0), 0).x;
+        adaptedLuminance = clamp(adaptedLuminance, AdaptRange.x, AdaptRange.y);
+    }
+    else
+    {
+        // Use the user-defined fixed luminance value when adaptation is disabled
+        adaptedLuminance = FixedLuminance;
+    }
 
     float exposure = exp2(Exposure);
     
