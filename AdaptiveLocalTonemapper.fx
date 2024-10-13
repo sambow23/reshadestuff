@@ -1,7 +1,7 @@
 // Adaptive Local Tonemapper for ReShade
 // Author: CR
 // Credits: 
-//     100% of code written by: ChatGPT 4o and Claude 3.5 
+//     100% of code written by: ChatGPT 4.0 and Claude 3.5 
 //     Adaptation Code from luluco250's AdaptiveTonemapper.fx
 
 #include "ReShade.fxh"
@@ -72,6 +72,86 @@ uniform float TonemappingIntensity <
     ui_step = 0.01;
 > = 0.8;
 
+// Tonemapper Selection
+uniform int TonemapperType <
+    ui_type = "combo";
+    ui_label = "Tonemapper Type";
+    ui_tooltip = "Select the tonemapping algorithm to use.";
+    ui_category = "Tone Mapping";
+    ui_items = "ACES\0AgX\0";
+> = 0; // 0 for ACES, 1 for AgX
+
+// AgX Parameters
+uniform float AgX_ShoulderStrength <
+    ui_type = "slider";
+    ui_label = "AgX Shoulder Strength";
+    ui_tooltip = "Controls how quickly highlights roll off.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.22;
+
+uniform float AgX_LinearStrength <
+    ui_type = "slider";
+    ui_label = "AgX Linear Strength";
+    ui_tooltip = "Adjusts the midtone contrast.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.3;
+
+uniform float AgX_LinearAngle <
+    ui_type = "slider";
+    ui_label = "AgX Linear Angle";
+    ui_tooltip = "Controls the angle of the linear section of the curve.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.1;
+
+uniform float AgX_ToeStrength <
+    ui_type = "slider";
+    ui_label = "AgX Toe Strength";
+    ui_tooltip = "Affects the shadows and how quickly they fade to black.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.2;
+
+uniform float AgX_ToeNumerator <
+    ui_type = "slider";
+    ui_label = "AgX Toe Numerator";
+    ui_tooltip = "Adjusts the toe numerator for the curve.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.01;
+
+uniform float AgX_ToeDenominator <
+    ui_type = "slider";
+    ui_label = "AgX Toe Denominator";
+    ui_tooltip = "Adjusts the toe denominator for the curve.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.1;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.3;
+
+uniform float AgX_ExposureBias <
+    ui_type = "slider";
+    ui_label = "AgX Exposure Bias";
+    ui_tooltip = "Balances the overall exposure level.";
+    ui_category = "AgX Parameters";
+    ui_min = 0.1;
+    ui_max = 5.0;
+    ui_step = 0.01;
+> = 1.0;
+
 // Local Adjustments
 uniform float LocalAdjustmentStrength <
     ui_type = "slider";
@@ -123,7 +203,6 @@ uniform float VibranceCurve <
     ui_max = 2.0;
     ui_step = 0.01;
 > = 1.0;
-
 
 // Zonal Adjustments
 uniform float ShadowAdjustment <
@@ -243,7 +322,6 @@ uniform float2 AdaptFocalPoint <
     ui_step = 0.001;
 > = 0.5;
 
-
 uniform float FrameTime <source = "frametime";>;
 
 //#endregion
@@ -359,15 +437,44 @@ float3 ACES_RRT(float3 color) {
     return (color * (A * color + B)) / (color * (C * color + D) + E);
 }
 
-// Local ACES RRT Tonemapping function
-float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
-{
-    const float A = 2.51;
-    const float B = 0.03;
-    const float C = 2.43;
-    const float D = 0.59;
-    const float E = 0.14;
+// AgX Tonemapping function
+float3 AgX_Tonemap(float3 color) {
+    // Apply exposure bias
+    color *= AgX_ExposureBias;
 
+    // Parameters
+    float shoulder_strength = AgX_ShoulderStrength;
+    float linear_strength = AgX_LinearStrength;
+    float linear_angle = AgX_LinearAngle;
+    float toe_strength = AgX_ToeStrength;
+    float toe_numerator = AgX_ToeNumerator;
+    float toe_denominator = AgX_ToeDenominator;
+
+    // AgX Tonemapping curve
+    float3 x = max(color - toe_numerator, 0.0);
+    float3 y = ((x * (linear_strength + x * shoulder_strength)) / (x + linear_strength * x + shoulder_strength)) + toe_numerator * x / (x + toe_denominator);
+
+    return y;
+}
+
+// Apply selected tonemapper
+float3 ApplyTonemapper(float3 color) {
+    if (TonemapperType == 0) {
+        // ACES Tonemapping
+        return ACES_RRT(color);
+    } else if (TonemapperType == 1) {
+        // AgX Tonemapping
+        return AgX_Tonemap(color);
+    } else {
+        // Default to ACES
+        return ACES_RRT(color);
+    }
+}
+
+// Local Tonemapping function
+float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
+{
+    // Local adaptation
     float adaptationFactor = max(adaptedLuminance, 0.001);
     float3 adaptedColor = color / adaptationFactor;
 
@@ -412,8 +519,8 @@ float3 ACES_RRT_Local(float3 color, float localLuminance, float adaptedLuminance
     midtoneWeight /= totalWeight;
     highlightWeight /= totalWeight;
 
-    // Apply ACES RRT with zonal intensity control
-    float3 toneMapped = (adjustedColor * (A * adjustedColor + B)) / (adjustedColor * (C * adjustedColor + D) + E);
+    // Apply selected tonemapping function
+    float3 toneMapped = ApplyTonemapper(adjustedColor);
     
     // Calculate zonal tonemapping intensity
     float zonalIntensity = shadowWeight * ShadowAdjustment + 
@@ -457,7 +564,6 @@ float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : 
     return adapt;
 }
 
-
 // Save adaptation values
 float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
     return tex2Dlod(Small, float4(AdaptFocalPoint, 0, AdaptMipLevels - AdaptPrecision));
@@ -487,8 +593,8 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply exposure adjustment
     color.rgb *= exposure;
 
-    // Apply local ACES RRT tonemapping with Lab space adjustments and zonal intensity control
-    color.rgb = ACES_RRT_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
+    // Apply local tonemapping with selected tonemapper
+    color.rgb = Tonemap_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
 
     // Apply enhanced local saturation boost
     float luma = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
