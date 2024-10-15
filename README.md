@@ -10,9 +10,7 @@ Collection of shaders I have made
 ### Features
 * Adaptive exposure adjustment
 * Local contrast enhancement
-* ACES RRT (Reference Rendering Transform) tonemapping
-* Color space conversions (RGB to Lab and back)
-* Bilateral filtering for local luminance calculation
+* ACES RRT and AgX tonemapping
 #### Customizable parameters including:
 * Exposure and brightness
 * Tonemapping intensity
@@ -22,7 +20,7 @@ Collection of shaders I have made
 * Adaptation settings (range, time, sensitivity)
 * Zonal Control of Tonemapping
 
-## EyeSight
+## EyeSight (needs rewrite)
 Shader that emulates parts of a camera
 ### Features
 * Veiling glare (soft glow around bright areas)
