@@ -1,10 +1,8 @@
-/**
- * Adaptive Local Tonemapper for ReShade
- * Author: CR
- * 
- * All shader code was written by ChatGPT o1-Preview and Claude 3.5 Sonnet
- * Adapation code from: luluco250's AdaptiveTonemapper.fx
- */
+// Adaptive Local Tonemapper for ReShade
+// Author: CR
+// Credits: 
+//     100% of code written by: ChatGPT 4o and Claude 3.5 
+//     Adaptation Code from luluco250's AdaptiveTonemapper.fx
 
 #include "ReShade.fxh"
 #include "ReShadeUI.fxh"
@@ -19,52 +17,9 @@
 
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
-//------------------------------------------------------------------------------
-// UI Elements
-//------------------------------------------------------------------------------
+//#region Uniforms
 
 // Final Adjustments
-uniform float Brightness <
-    ui_type = "slider";
-    ui_label = "Final Brightness";
-    ui_tooltip = "Adjusts the overall brightness of the final image.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.5; ui_max = 5.0; ui_step = 0.01;
-> = 1.0;
-
-uniform float Gamma <
-    ui_type = "slider";
-    ui_label = "Final Gamma";
-    ui_tooltip = "Adjusts the gamma curve of the final image.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.1; ui_max = 2.2; ui_step = 0.01;
-> = 1.0;
-
-uniform float GlobalOpacity <
-    ui_type = "slider";
-    ui_label = "Final Opacity";
-    ui_tooltip = "Controls the blend between the original and processed image.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 1.0;
-
-// Exposure
-uniform float Exposure <
-    ui_type = "slider";
-    ui_label = "Exposure";
-    ui_tooltip = "Adjusts the overall brightness before tonemapping.";
-    ui_category = "Exposure";
-    ui_min = -3.0; ui_max = 2.0; ui_step = 0.01;
-> = 0.0;
-
-// Tone Mapping
-uniform float TonemappingIntensity <
-    ui_type = "slider";
-    ui_label = "Tone Mapping Strength";
-    ui_tooltip = "Controls the intensity of the tone mapping effect.";
-    ui_category = "Tone Mapping";
-    ui_min = 0.1; ui_max = 1.5; ui_step = 0.01;
-> = 0.8;
 
 uniform int TonemapperType <
     ui_type = "combo";
@@ -74,62 +29,57 @@ uniform int TonemapperType <
     ui_items = "ACES\0AgX\0";
 > = 0;
 
-// AgX Parameters
-uniform float AgX_ShoulderStrength <
+uniform float Brightness <
     ui_type = "slider";
-    ui_label = "AgX Shoulder Strength";
-    ui_tooltip = "Controls how quickly highlights roll off.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.22;
-
-uniform float AgX_LinearStrength <
-    ui_type = "slider";
-    ui_label = "AgX Linear Strength";
-    ui_tooltip = "Adjusts the midtone contrast.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.3;
-
-uniform float AgX_LinearAngle <
-    ui_type = "slider";
-    ui_label = "AgX Linear Angle";
-    ui_tooltip = "Controls the angle of the linear section of the curve.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.1;
-
-uniform float AgX_ToeStrength <
-    ui_type = "slider";
-    ui_label = "AgX Toe Strength";
-    ui_tooltip = "Affects the shadows and how quickly they fade to black.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.2;
-
-uniform float AgX_ToeNumerator <
-    ui_type = "slider";
-    ui_label = "AgX Toe Numerator";
-    ui_tooltip = "Adjusts the toe numerator for the curve.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
-> = 0.01;
-
-uniform float AgX_ToeDenominator <
-    ui_type = "slider";
-    ui_label = "AgX Toe Denominator";
-    ui_tooltip = "Adjusts the toe denominator for the curve.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.1; ui_max = 1.0; ui_step = 0.01;
-> = 0.3;
-
-uniform float AgX_ExposureBias <
-    ui_type = "slider";
-    ui_label = "AgX Exposure Bias";
-    ui_tooltip = "Balances the overall exposure level.";
-    ui_category = "AgX Parameters";
-    ui_min = 0.1; ui_max = 5.0; ui_step = 0.01;
+    ui_label = "Final Brightness";
+    ui_tooltip = "Adjusts the overall brightness of the final image. Use this for fine-tuning after other adjustments.";
+    ui_category = "Final Adjustments";
+    ui_min = 0.5;
+    ui_max = 5.0;
+    ui_step = 0.01;
 > = 1.0;
+
+uniform float Gamma <
+    ui_type = "slider";
+    ui_label = "Final Gamma";
+    ui_tooltip = "Adjusts the gamma curve of the final image. Lower values brighten shadows, higher values darken midtones.";
+    ui_category = "Final Adjustments";
+    ui_min = 0.1;
+    ui_max = 2.2;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float GlobalOpacity <
+    ui_type = "slider";
+    ui_label = "Final Opacity";
+    ui_tooltip = "Controls the blend between the original image and the processed image. 0 = Original, 1 = Fully Processed";
+    ui_category = "Final Adjustments";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 1.0;
+
+// Exposure
+uniform float Exposure <
+    ui_type = "slider";
+    ui_label = "Exposure";
+    ui_tooltip = "Adjusts the overall brightness before tonemapping. Higher values brighten the image, lower values darken it.";
+    ui_category = "Exposure";
+    ui_min = -3.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 0.0;
+
+// Tone Mapping
+uniform float TonemappingIntensity <
+    ui_type = "slider";
+    ui_label = "Tone Mapping Strength";
+    ui_tooltip = "Controls the intensity of the tone mapping effect. Higher values increase contrast and color vibrancy.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.1;
+    ui_max = 1.5;
+    ui_step = 0.01;
+> = 0.8;
 
 // Local Adjustments
 uniform float LocalAdjustmentStrength <
@@ -137,7 +87,9 @@ uniform float LocalAdjustmentStrength <
     ui_label = "Local Adjustment Strength";
     ui_tooltip = "Controls the overall strength of local adjustments.";
     ui_category = "Local Adjustments";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
 > = 0.5;
 
 uniform float LocalAdjustmentCurve <
@@ -145,16 +97,20 @@ uniform float LocalAdjustmentCurve <
     ui_label = "Local Adjustment Curve";
     ui_tooltip = "Adjusts the balance between shadow and highlight processing.";
     ui_category = "Local Adjustments";
-    ui_min = 0.1; ui_max = 2.0; ui_step = 0.01;
+    ui_min = 0.1;
+    ui_max = 2.0;
+    ui_step = 0.01;
 > = 1.0;
 
 // Color
 uniform float LocalSaturationBoost <
     ui_type = "slider";
     ui_label = "Color Vibrance";
-    ui_tooltip = "Boosts color saturation, especially in less saturated areas.";
+    ui_tooltip = "Boosts color saturation, especially in less saturated areas. Higher values make colors more vivid.";
     ui_category = "Color";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
 > = 0.1;
 
 uniform float SkinToneProtection <
@@ -162,16 +118,21 @@ uniform float SkinToneProtection <
     ui_label = "Skin Tone Protection";
     ui_tooltip = "Higher values protect skin tones from oversaturation.";
     ui_category = "Color";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
 > = 0.5;
 
 uniform float VibranceCurve <
     ui_type = "slider";
     ui_label = "Vibrance Curve";
-    ui_tooltip = "Adjusts the curve of the vibrance effect.";
+    ui_tooltip = "Adjusts the curve of the vibrance effect. Higher values boost less saturated colors more.";
     ui_category = "Color";
-    ui_min = 0.5; ui_max = 2.0; ui_step = 0.01;
+    ui_min = 0.5;
+    ui_max = 2.0;
+    ui_step = 0.01;
 > = 1.0;
+
 
 // Zonal Adjustments
 uniform float ShadowAdjustment <
@@ -179,7 +140,9 @@ uniform float ShadowAdjustment <
     ui_label = "Shadow Adjustment";
     ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
     ui_category = "Zonal Adjustments";
-    ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
 > = 1.0;
 
 uniform float MidtoneAdjustment <
@@ -187,7 +150,9 @@ uniform float MidtoneAdjustment <
     ui_label = "Midtone Adjustment";
     ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
     ui_category = "Zonal Adjustments";
-    ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
 > = 1.0;
 
 uniform float HighlightAdjustment <
@@ -195,7 +160,9 @@ uniform float HighlightAdjustment <
     ui_label = "Highlight Adjustment";
     ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
     ui_category = "Zonal Adjustments";
-    ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
 > = 1.0;
 
 uniform float MidtonesCenter <
@@ -203,7 +170,9 @@ uniform float MidtonesCenter <
     ui_label = "Midtones Center";
     ui_tooltip = "Center point of the midtone range.";
     ui_category = "Zonal Adjustments";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
 > = 0.5;
 
 uniform float MidtonesWidth <
@@ -211,23 +180,27 @@ uniform float MidtonesWidth <
     ui_label = "Midtones Width";
     ui_tooltip = "Width of the midtone range.";
     ui_category = "Zonal Adjustments";
-    ui_min = 0.1; ui_max = 0.8; ui_step = 0.01;
+    ui_min = 0.1;
+    ui_max = 0.8;
+    ui_step = 0.01;
 > = 0.4;
 
 // Adaptation
 uniform bool EnableAdaptation <
     ui_type = "checkbox";
     ui_label = "Enable Adaptation";
-    ui_tooltip = "Toggle adaptive tonemapping on/off.";
+    ui_tooltip = "Toggle adaptive tonemapping on/off. When off, static tonemapping is used.";
     ui_category = "Adaptation";
 > = true;
 
 uniform float FixedLuminance <
     ui_type = "slider";
     ui_label = "Fixed Luminance";
-    ui_tooltip = "The fixed luminance value to use when adaptation is disabled.";
+    ui_tooltip = "The fixed luminance value to use when adaptation is disabled. 0.18 is middle gray.";
     ui_category = "Adaptation";
-    ui_min = 0.01; ui_max = 1.0; ui_step = 0.01;
+    ui_min = 0.01;
+    ui_max = 1.0;
+    ui_step = 0.01;
 > = 0.18;
 
 uniform float2 AdaptRange <
@@ -235,7 +208,9 @@ uniform float2 AdaptRange <
     ui_label = "Adaptation Range";
     ui_tooltip = "The minimum and maximum values that adaptation can use.";
     ui_category = "Adaptation";
-    ui_min = 0.001; ui_max = 2.0; ui_step = 0.001;
+    ui_min = 0.001;
+    ui_max = 2.0;
+    ui_step = 0.001;
 > = float2(1.0, 2.0);
 
 uniform float AdaptTime <
@@ -243,7 +218,9 @@ uniform float AdaptTime <
     ui_label = "Adaptation Time";
     ui_tooltip = "The time in seconds that adaptation takes to occur.";
     ui_category = "Adaptation";
-    ui_min = 0.0; ui_max = 3.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 3.0;
+    ui_step = 0.01;
 > = 1.0;
 
 uniform float AdaptSensitivity <
@@ -251,7 +228,9 @@ uniform float AdaptSensitivity <
     ui_label = "Adaptation Sensitivity";
     ui_tooltip = "Determines how sensitive adaptation is to bright lights.";
     ui_category = "Adaptation";
-    ui_min = 0.0; ui_max = 12.0; ui_step = 0.01;
+    ui_min = 0.0;
+    ui_max = 12.0;
+    ui_step = 0.01;
 > = 9.0;
 
 uniform int AdaptPrecision <
@@ -259,7 +238,8 @@ uniform int AdaptPrecision <
     ui_label = "Adaptation Precision";
     ui_tooltip = "The amount of precision used when determining the overall brightness.";
     ui_category = "Adaptation";
-    ui_min = 0; ui_max = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
+    ui_min = 0;
+    ui_max = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 > = 0;
 
 uniform float2 AdaptFocalPoint <
@@ -267,14 +247,17 @@ uniform float2 AdaptFocalPoint <
     ui_label = "Adaptation Focal Point";
     ui_tooltip = "Determines a point in the screen that adaptation will be centered around.";
     ui_category = "Adaptation";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.001;
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.001;
 > = 0.5;
+
 
 uniform float FrameTime <source = "frametime";>;
 
-//------------------------------------------------------------------------------
-// Textures and Samplers
-//------------------------------------------------------------------------------
+//#endregion
+
+//#region Textures and Samplers
 
 sampler BackBuffer {
     Texture = ReShade::BackBufferTex;
@@ -300,17 +283,15 @@ sampler LastAdapt {
     MipFilter = POINT;
 };
 
-//------------------------------------------------------------------------------
-// Helper Functions
-//------------------------------------------------------------------------------
+//#endregion
 
-// Smootherstep function for smoother transitions
+//#region Helper Functions
+
 float smootherstep(float edge0, float edge1, float x) {
     x = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
     return x * x * x * (x * (x * 6 - 15) + 10);
 }
 
-// Convert RGB to Lab color space
 float3 RGB2Lab(float3 rgb)
 {
     // Convert RGB to XYZ
@@ -331,7 +312,6 @@ float3 RGB2Lab(float3 rgb)
     );
 }
 
-// Convert Lab to RGB color space
 float3 Lab2RGB(float3 lab)
 {
     float fy = (lab.x + 16.0) / 116.0;
@@ -388,44 +368,17 @@ float3 ACES_RRT(float3 color) {
     return (color * (A * color + B)) / (color * (C * color + D) + E);
 }
 
-// AgX Tonemapping function
 float3 AgX_Tonemap(float3 color) {
-    // Apply exposure bias
-    color *= AgX_ExposureBias;
-
-    // Parameters
-    float shoulder_strength = AgX_ShoulderStrength;
-    float linear_strength = AgX_LinearStrength;
-    float linear_angle = AgX_LinearAngle;
-    float toe_strength = AgX_ToeStrength;
-    float toe_numerator = AgX_ToeNumerator;
-    float toe_denominator = AgX_ToeDenominator;
-
-    // AgX Tonemapping curve
-    float3 x = max(color - toe_numerator, 0.0);
-    float3 y = ((x * (linear_strength + x * shoulder_strength)) / (x + linear_strength * x + shoulder_strength)) + toe_numerator * x / (x + toe_denominator);
-
-    return y;
+    // AgX tonemapping curve approximation
+    // Parameters derived to match the AgX response
+    float3 tonemappedColor = color / (color + float3(0.155, 0.155, 0.155)) * 1.019; // Simple approximation
+    return tonemappedColor;
 }
 
-// Apply selected tonemapper
-float3 ApplyTonemapper(float3 color) {
-    if (TonemapperType == 0) {
-        // ACES Tonemapping
-        return ACES_RRT(color);
-    } else if (TonemapperType == 1) {
-        // AgX Tonemapping
-        return AgX_Tonemap(color);
-    } else {
-        // Default to ACES
-        return ACES_RRT(color);
-    }
-}
 
-// Local Tonemapping function
+// **Modified Tonemap_Local Function**
 float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
 {
-    // Local adaptation
     float adaptationFactor = max(adaptedLuminance, 0.001);
     float3 adaptedColor = color / adaptationFactor;
 
@@ -470,8 +423,15 @@ float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance,
     midtoneWeight /= totalWeight;
     highlightWeight /= totalWeight;
 
-    // Apply selected tonemapping function
-    float3 toneMapped = ApplyTonemapper(adjustedColor);
+    // **Select Tonemapping Curve Based on User Choice**
+    float3 toneMapped;
+    if (TonemapperType == 0) {
+        // ACES Tonemapping
+        toneMapped = ACES_RRT(adjustedColor);
+    } else {
+        // AgX Tonemapping
+        toneMapped = AgX_Tonemap(adjustedColor);
+    }
     
     // Calculate zonal tonemapping intensity
     float zonalIntensity = shadowWeight * ShadowAdjustment + 
@@ -487,9 +447,9 @@ float3 ApplyGamma(float3 color, float gamma) {
     return pow(max(color, 0.0001), 1.0 / gamma);
 }
 
-//------------------------------------------------------------------------------
-// Pixel Shaders
-//------------------------------------------------------------------------------
+//#endregion
+
+//#region Pixel Shaders
 
 // Calculate adaptation values
 float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
@@ -514,6 +474,7 @@ float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : 
     // Return the adapted luminance value
     return adapt;
 }
+
 
 // Save adaptation values
 float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
@@ -544,7 +505,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply exposure adjustment
     color.rgb *= exposure;
 
-    // Apply local tonemapping with selected tonemapper
+    // Apply local ACES RRT tonemapping with Lab space adjustments and zonal intensity control
     color.rgb = Tonemap_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
 
     // Apply enhanced local saturation boost
@@ -578,9 +539,9 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     return saturate(color);
 }
 
-//------------------------------------------------------------------------------
-// Technique
-//------------------------------------------------------------------------------
+//#endregion
+
+//#region Technique
 
 technique LocalTonemapper {
     pass CalculateAdaptation {
@@ -599,3 +560,5 @@ technique LocalTonemapper {
         SRGBWriteEnable = true;
     }
 }
+
+//#endregion
