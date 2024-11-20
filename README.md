@@ -9,7 +9,7 @@ Collection of shaders I have made
 ## AdaptiveLocalTonemapper:
 ### Features
 * Adaptive exposure adjustment
-* Local contrast enhancement
+* Local and micro contrast enhancement
 * ACES RRT and AgX tonemapping
 #### Customizable parameters including:
 * Exposure and brightness
