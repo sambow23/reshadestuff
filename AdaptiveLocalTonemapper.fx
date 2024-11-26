@@ -303,10 +303,10 @@ uniform float DetailPreservation <
     ui_label = "Detail Preservation";
     ui_tooltip = "Prevents over-sharpening of fine details";
     ui_category = "Micro Contrast";
-    ui_min = 0.0;
+    ui_min = 0.75;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.5;
+> = 0.75;
 
 uniform float NoiseThreshold <
     ui_type = "slider";
@@ -569,13 +569,10 @@ float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Ta
 
 // Modified micro-contrast function with debug output
 float4 ApplyMicroContrast(float3 color, float2 texcoord, out float4 debugOutput) {
-    float centerLuma = dot(color, float3(0.2126, 0.7152, 0.0722));
+    float3 labColor = RGB2Lab(color);
     float3 microDetail = 0.0;
     float detailMask = 0.0;
     float totalWeight = 0.0;
-    float3 debugDetailVectors = 0.0;
-    float debugNoiseMask = 0.0;
-    float debugDetailStrength = 0.0;
     
     static const int numDirections = 8;
     static const float2 directions[numDirections] = {
@@ -585,85 +582,92 @@ float4 ApplyMicroContrast(float3 color, float2 texcoord, out float4 debugOutput)
         float2(0.707, -0.707), float2(-0.707, -0.707)
     };
     
-    // Increase sample distance for more visible effect
-    float sampleDistance = 2.0; // Increased from 1.0
+    float3 debugDetailVectors = 0.0;
+    float debugNoiseMask = 0.0;
+    float debugDetailStrength = 0.0;
     
     [unroll]
     for(int i = 0; i < numDirections; i++) {
-        float2 offset = directions[i] * ReShade::PixelSize * sampleDistance;
-        float3 sampleColor = tex2D(BackBuffer, texcoord + offset).rgb;
+        float2 offset = directions[i] * ReShade::PixelSize * 2.0;
+        float3 sampleLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb);
         
-        // Calculate detail in RGB space for more pronounced effect
-        float3 detailVector = color - sampleColor;
-        float detailMagnitude = length(detailVector);
+        // Calculate detail in LAB space
+        float3 detailVector = labColor - sampleLab;
         
-        // More aggressive noise threshold
-        float noiseMask = smoothstep(NoiseThreshold, NoiseThreshold * 4.0, detailMagnitude);
+        // Separate weights for luminance and color channels
+        float lumWeight = exp(-abs(detailVector.x) * (1.0 - DetailPreservation));
+        float colorWeight = exp(-length(detailVector.yz) * (1.0 - DetailPreservation));
         
-        // Modify weight calculation for stronger effect
-        float weight = exp(-detailMagnitude * (1.0 - DetailPreservation));
+        // Noise detection in LAB space (more accurate)
+        float lumNoise = smoothstep(NoiseThreshold * 5.0, NoiseThreshold * 20.0, abs(detailVector.x));
+        float colorNoise = smoothstep(NoiseThreshold * 3.0, NoiseThreshold * 12.0, length(detailVector.yz));
+        
+        float3 weight = float3(lumWeight, colorWeight, colorWeight);
+        float3 noiseMask = float3(lumNoise, colorNoise, colorNoise);
+        
         weight *= noiseMask;
         
         microDetail += detailVector * weight;
-        detailMask += detailMagnitude * weight;
         totalWeight += weight;
         
-        // Accumulate debug information
+        // Debug information
         debugDetailVectors += abs(detailVector);
-        debugNoiseMask += noiseMask;
-        debugDetailStrength += detailMagnitude * weight;
+        debugNoiseMask += (lumNoise + colorNoise) * 0.5;
+        debugDetailStrength += (length(detailVector.x) + length(detailVector.yz)) * 0.5;
     }
     
-    // Normalize accumulated values
     microDetail /= max(totalWeight, 0.001);
-    detailMask /= max(totalWeight, 0.001);
-    debugNoiseMask /= numDirections;
-    debugDetailVectors /= numDirections;
-    debugDetailStrength /= numDirections;
     
-    // Amplify the effect
-    float3 enhancedColor = color + microDetail * MicroContrastStrength * 3.0; // Increased strength multiplier
-    float finalMask = saturate(1.0 - detailMask * DetailPreservation);
+    // Apply enhancement in LAB space
+    float3 enhancedLab = labColor + microDetail * MicroContrastStrength * float3(3.0, 1.5, 1.5);
     
-    // Prepare debug visualization
+    // Debug output handling
     debugOutput = 0.0;
     switch(DebugMode) {
-        case 1: // Detail Map
-            debugOutput = float4(debugDetailVectors * DebugMultiplier, 1.0);
-            break;
-        case 2: // Noise Mask
-            debugOutput = float4(debugNoiseMask.xxx * DebugMultiplier, 1.0);
-            break;
-        case 3: // Enhancement Strength
-            debugOutput = float4(debugDetailStrength.xxx * DebugMultiplier, 1.0);
-            break;
-        case 4: // Detail Vectors
-            debugOutput = float4(normalize(microDetail) * 0.5 + 0.5, 1.0);
-            break;
+        case 1: debugOutput = float4(debugDetailVectors * DebugMultiplier / numDirections, 1.0); break;
+        case 2: debugOutput = float4(debugNoiseMask.xxx * DebugMultiplier / numDirections, 1.0); break;
+        case 3: debugOutput = float4(debugDetailStrength.xxx * DebugMultiplier / numDirections, 1.0); break;
+        case 4: debugOutput = float4(normalize(microDetail) * 0.5 + 0.5, 1.0); break;
     }
     
-    return float4(lerp(color, enhancedColor, finalMask), detailMask);
+    return float4(Lab2RGB(enhancedLab), 1.0);
 }
 
 float3 ApplyLocalContrast(float3 color, float2 texcoord) {
-    // Reuse the existing bilateral filtering function for local luminance
-    float localLuminance = CalculateLocalLuminance(texcoord);
-    
-    // Convert to Lab space for better contrast manipulation
     float3 labColor = RGB2Lab(color);
+    float3 labSum = 0;
+    float weightSum = 0;
     
-    // Calculate local contrast using bilateral filtered luminance
-    float centerLuminance = dot(color, float3(0.2126, 0.7152, 0.0722));
-    float luminanceDiff = centerLuminance - localLuminance;
+    // Calculate local LAB statistics using bilateral filtering
+    [unroll]
+    for (int x = -2; x <= 2; x++) {
+        [unroll]
+        for (int y = -2; y <= 2; y++) {
+            float2 offset = float2(x, y) * LocalContrastRadius * ReShade::PixelSize;
+            float3 neighborLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb);
+            
+            // Spatial weight
+            float spatialWeight = exp(-(x*x + y*y) / (2.0 * LocalContrastRadius * LocalContrastRadius));
+            
+            // Range weight in LAB space (more perceptually accurate)
+            float labDist = length(neighborLab - labColor);
+            float rangeWeight = exp(-labDist / (2.0 * 10.0)); // 10.0 is LAB sigma
+            
+            float weight = spatialWeight * rangeWeight;
+            labSum += neighborLab * weight;
+            weightSum += weight;
+        }
+    }
     
-    // Apply contrast enhancement in Lab space
-    float contrastMask = 1.0 - exp(-abs(luminanceDiff) * LocalContrastRadius);
-    float enhancement = sign(luminanceDiff) * contrastMask * LocalContrastStrength;
+    float3 localLabAvg = labSum / weightSum;
     
-    // Modify only the L channel
-    labColor.x += enhancement * 100.0; // Scale factor for Lab L channel
+    // Enhanced contrast in LAB space
+    float3 labDiff = labColor - localLabAvg;
     
-    // Convert back to RGB
+    // Separate enhancement for L and a/b channels
+    labColor.x += labDiff.x * LocalContrastStrength * 2.0; // Luminance enhancement
+    labColor.yz += labDiff.yz * LocalContrastStrength * 1.2; // Color enhancement
+    
     return Lab2RGB(labColor);
 }
 
