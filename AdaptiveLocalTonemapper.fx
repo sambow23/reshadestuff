@@ -137,7 +137,7 @@ uniform float VibranceCurve <
 // Zonal Adjustments
 uniform float ShadowAdjustment <
     ui_type = "slider";
-    ui_label = "Shadow Adjustment";
+    ui_label = "Shadows";
     ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -145,9 +145,10 @@ uniform float ShadowAdjustment <
     ui_step = 0.01;
 > = 1.0;
 
+
 uniform float MidtoneAdjustment <
     ui_type = "slider";
-    ui_label = "Midtone Adjustment";
+    ui_label = "Midtones";
     ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -157,7 +158,7 @@ uniform float MidtoneAdjustment <
 
 uniform float HighlightAdjustment <
     ui_type = "slider";
-    ui_label = "Highlight Adjustment";
+    ui_label = "Highlights";
     ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -184,6 +185,26 @@ uniform float MidtonesWidth <
     ui_max = 0.8;
     ui_step = 0.01;
 > = 0.4;
+
+uniform float ShadowsEnd <
+    ui_type = "slider";
+    ui_label = "Shadows End";
+    ui_tooltip = "Adjusts the LAB end of shadows.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float HighlightsStart <
+    ui_type = "slider";
+    ui_label = "Highlights Start";
+    ui_tooltip = "Adjusts the LAB start of highlights.";
+    ui_category = "Zonal Adjustments";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.0;
 
 // Adaptation
 uniform bool EnableAdaptation <
@@ -483,25 +504,13 @@ float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance,
     // Apply local adjustment to L channel
     labColor.x *= localAdaptation;
 
-    // Convert back to RGB
-    float3 adjustedColor = Lab2RGB(labColor);
-
-    // Soft clipping to prevent harsh clipping
-    adjustedColor = 1.0 - exp(-adjustedColor);
-
-    // Calculate luminance
-    float luminance = dot(adjustedColor, float3(0.2126, 0.7152, 0.0722));
-
-    // Zonal Definitions
-    float HighlightsStart = 0.0;
-    float ShadowsEnd = 0.3;
-
-    // Calculate zonal weights
-    float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, luminance);
-    float highlightWeight = smootherstep(HighlightsStart, 0.5, luminance);
+    // Apply zonal adjustments in LAB space
+    float L = labColor.x / 100.0; // Normalize L to 0-1 range for easier calculations
     
-    // Independent midtone weight calculation
-    float midtoneWeight = exp(-pow(luminance - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
+    // Calculate zonal weights using L channel
+    float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, L);
+    float highlightWeight = smootherstep(HighlightsStart, 0.5, L);
+    float midtoneWeight = exp(-pow(L - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
 
     // Normalize weights
     float totalWeight = shadowWeight + midtoneWeight + highlightWeight;
@@ -509,23 +518,29 @@ float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance,
     midtoneWeight /= totalWeight;
     highlightWeight /= totalWeight;
 
-    // **Select Tonemapping Curve Based on User Choice**
+    // Apply zonal adjustments to L channel
+    float zonalFactor = shadowWeight * ShadowAdjustment + 
+                       midtoneWeight * MidtoneAdjustment + 
+                       highlightWeight * HighlightAdjustment;
+    
+    labColor.x *= zonalFactor;
+    
+    // Convert back to RGB for tonemapping
+    float3 adjustedColor = Lab2RGB(labColor);
+
+    // Soft clipping to prevent harsh clipping
+    adjustedColor = 1.0 - exp(-adjustedColor);
+
+    // Apply tonemapping based on user choice
     float3 toneMapped;
     if (TonemapperType == 0) {
-        // ACES Tonemapping
         toneMapped = ACES_RRT(adjustedColor);
     } else {
-        // AgX Tonemapping
         toneMapped = AgX_Tonemap(adjustedColor);
     }
-    
-    // Calculate zonal tonemapping intensity
-    float zonalIntensity = shadowWeight * ShadowAdjustment + 
-                           midtoneWeight * MidtoneAdjustment + 
-                           highlightWeight * HighlightAdjustment;
 
-    // Blend between original and tonemapped based on zonal intensities
-    return lerp(adjustedColor, toneMapped, intensity * zonalIntensity);
+    // Blend between original and tonemapped
+    return lerp(adjustedColor, toneMapped, intensity);
 }
 
 // Apply Gamma Correction
