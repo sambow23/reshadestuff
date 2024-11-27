@@ -1,8 +1,8 @@
 // Adaptive Local Tonemapper for ReShade
 // Author: CR
 // Credits: 
-//     100% of code written by: ChatGPT 4o and Claude 3.5 
-//     Adaptation Code from luluco250's AdaptiveTonemapper.fx
+//     100% of code written by: Claude 3.5 Sonnet
+//     Some adaptation Code from luluco250's AdaptiveTonemapper.fx
 
 #include "ReShade.fxh"
 #include "ReShadeUI.fxh"
@@ -108,7 +108,7 @@ uniform float VibranceCurve <
 // Zonal Adjustments
 uniform float ShadowAdjustment <
     ui_type = "slider";
-    ui_label = "Shadow Adjustment";
+    ui_label = "Shadows";
     ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -118,7 +118,7 @@ uniform float ShadowAdjustment <
 
 uniform float MidtoneAdjustment <
     ui_type = "slider";
-    ui_label = "Midtone Adjustment";
+    ui_label = "Midtones";
     ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -128,7 +128,7 @@ uniform float MidtoneAdjustment <
 
 uniform float HighlightAdjustment <
     ui_type = "slider";
-    ui_label = "Highlight Adjustment";
+    ui_label = "Highlights";
     ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -646,13 +646,13 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     }
 
     // Apply exposure adjustment with white point preservation
-    float whitePoint = 1.45; // Move the static white point here as a constant
+    float whitePoint = 1.2; // Move the static white point here as a constant
     float exposure = exp2(Exposure);
     
     // Apply exposure while maintaining the white point relationship
     color.rgb *= exposure / whitePoint;
+    color.rgb = ApplyGamma(color.rgb, Gamma);
     
-
     // Continue with existing tonemapping
     color.rgb = Tonemap_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
 
@@ -671,7 +671,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     
     // Final adjustments
     color.rgb = lerp(originalColor.rgb, color.rgb, GlobalOpacity);
-    color.rgb = ApplyGamma(color.rgb, Gamma);
+
     color.rgb *= whitePoint;
 
     return saturate(color);
