@@ -14,6 +14,8 @@
 #define BILATERAL_RADIUS 4.0
 #define BILATERAL_SIGMA_SPATIAL 3.0
 #define BILATERAL_SIGMA_RANGE 0.1
+#define ADAPT_FOCAL_POINT float2(0.5, 0.5)
+#define ADAPT_PRECISION 0
 
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
@@ -24,20 +26,10 @@ static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 uniform int TonemapperType <
     ui_type = "combo";
     ui_label = "Tonemapper Type";
-    ui_tooltip = "Select the tonemapping algorithm to use.";
+    ui_tooltip = "Select the tonemapping algorithm to use. (ACES/AgX settings do not match each other, please re-adjust when switching tonemappers)";
     ui_category = "Tone Mapping";
     ui_items = "ACES\0AgX\0";
-> = 0;
-
-uniform float Brightness <
-    ui_type = "slider";
-    ui_label = "Final Brightness";
-    ui_tooltip = "Adjusts the overall brightness of the final image. Use this for fine-tuning after other adjustments.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.5;
-    ui_max = 5.0;
-    ui_step = 0.01;
-> = 1.0;
+> = 1;
 
 uniform float Gamma <
     ui_type = "slider";
@@ -47,7 +39,7 @@ uniform float Gamma <
     ui_min = 0.1;
     ui_max = 2.2;
     ui_step = 0.01;
-> = 1.0;
+> = 0.50;
 
 uniform float GlobalOpacity <
     ui_type = "slider";
@@ -77,30 +69,9 @@ uniform float TonemappingIntensity <
     ui_tooltip = "Controls the intensity of the tone mapping effect. Higher values increase contrast and color vibrancy.";
     ui_category = "Tone Mapping";
     ui_min = 0.1;
-    ui_max = 1.5;
+    ui_max = 3.0;
     ui_step = 0.01;
-> = 0.8;
-
-// Local Adjustments
-uniform float LocalAdjustmentStrength <
-    ui_type = "slider";
-    ui_label = "Local Adjustment Strength";
-    ui_tooltip = "Controls the overall strength of local adjustments.";
-    ui_category = "Local Adjustments";
-    ui_min = 0.0;
-    ui_max = 1.0;
-    ui_step = 0.01;
-> = 0.5;
-
-uniform float LocalAdjustmentCurve <
-    ui_type = "slider";
-    ui_label = "Local Adjustment Curve";
-    ui_tooltip = "Adjusts the balance between shadow and highlight processing.";
-    ui_category = "Local Adjustments";
-    ui_min = 0.1;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.0;
+> = 1.5;
 
 // Color
 uniform float LocalSaturationBoost <
@@ -111,11 +82,11 @@ uniform float LocalSaturationBoost <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.1;
+> = 0.5;
 
 uniform float SkinToneProtection <
     ui_type = "slider";
-    ui_label = "Skin Tone Protection";
+    ui_label = "Skin Tone Protection (Broken)";
     ui_tooltip = "Higher values protect skin tones from oversaturation.";
     ui_category = "Color";
     ui_min = 0.0;
@@ -137,18 +108,17 @@ uniform float VibranceCurve <
 // Zonal Adjustments
 uniform float ShadowAdjustment <
     ui_type = "slider";
-    ui_label = "Shadows";
+    ui_label = "Shadow Adjustment";
     ui_tooltip = "Adjusts the tonemapping intensity in shadow areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 1.0;
-
+> = 0.5;
 
 uniform float MidtoneAdjustment <
     ui_type = "slider";
-    ui_label = "Midtones";
+    ui_label = "Midtone Adjustment";
     ui_tooltip = "Adjusts the tonemapping intensity in midtone areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -158,7 +128,7 @@ uniform float MidtoneAdjustment <
 
 uniform float HighlightAdjustment <
     ui_type = "slider";
-    ui_label = "Highlights";
+    ui_label = "Highlight Adjustment";
     ui_tooltip = "Adjusts the tonemapping intensity in highlight areas.";
     ui_category = "Zonal Adjustments";
     ui_min = 0.0;
@@ -186,43 +156,7 @@ uniform float MidtonesWidth <
     ui_step = 0.01;
 > = 0.4;
 
-uniform float ShadowsEnd <
-    ui_type = "slider";
-    ui_label = "Shadows End";
-    ui_tooltip = "Adjusts the LAB end of shadows.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.0;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.0;
-
-uniform float HighlightsStart <
-    ui_type = "slider";
-    ui_label = "Highlights Start";
-    ui_tooltip = "Adjusts the LAB start of highlights.";
-    ui_category = "Zonal Adjustments";
-    ui_min = 0.0;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.0;
-
 // Adaptation
-uniform bool EnableAdaptation <
-    ui_type = "checkbox";
-    ui_label = "Enable Adaptation";
-    ui_tooltip = "Toggle adaptive tonemapping on/off. When off, static tonemapping is used.";
-    ui_category = "Adaptation";
-> = true;
-
-uniform float FixedLuminance <
-    ui_type = "slider";
-    ui_label = "Fixed Luminance";
-    ui_tooltip = "The fixed luminance value to use when adaptation is disabled. 0.18 is middle gray.";
-    ui_category = "Adaptation";
-    ui_min = 0.01;
-    ui_max = 1.0;
-    ui_step = 0.01;
-> = 0.18;
 
 uniform float2 AdaptRange <
     ui_type = "drag";
@@ -232,7 +166,7 @@ uniform float2 AdaptRange <
     ui_min = 0.001;
     ui_max = 2.0;
     ui_step = 0.001;
-> = float2(1.0, 2.0);
+> = float2(0.5, 2.0);
 
 uniform float AdaptTime <
     ui_type = "drag";
@@ -252,99 +186,77 @@ uniform float AdaptSensitivity <
     ui_min = 0.0;
     ui_max = 12.0;
     ui_step = 0.01;
-> = 9.0;
+> = 11.0;
 
-uniform int AdaptPrecision <
+uniform bool EnableAdaptation <
+    ui_type = "checkbox";
+    ui_label = "Enable Adaptation";
+    ui_tooltip = "Toggle adaptive tonemapping on/off. When off, static tonemapping is used.";
+    ui_category = "Adaptation";
+> = true;
+
+uniform float FixedLuminance <
     ui_type = "slider";
-    ui_label = "Adaptation Precision";
-    ui_tooltip = "The amount of precision used when determining the overall brightness.";
+    ui_label = "Fixed Luminance";
+    ui_tooltip = "The fixed luminance value to use when adaptation is disabled. 0.18 is middle gray.";
     ui_category = "Adaptation";
-    ui_min = 0;
-    ui_max = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
-> = 0;
-
-uniform float2 AdaptFocalPoint <
-    ui_type = "drag";
-    ui_label = "Adaptation Focal Point";
-    ui_tooltip = "Determines a point in the screen that adaptation will be centered around.";
-    ui_category = "Adaptation";
-    ui_min = 0.0;
-    ui_max = 1.0;
-    ui_step = 0.001;
-> = 0.5;
+    ui_min = 0.50;
+    ui_max = 5.0;
+    ui_step = 0.01;
+> = 1.50;
 
 // Local Contrast Controls
 uniform bool EnableLocalContrast <
     ui_type = "checkbox";
     ui_label = "Enable Local Contrast";
     ui_tooltip = "Toggles local contrast enhancement";
-    ui_category = "Local Contrast";
+    ui_category = "Local and Micro Contrast";
 > = true;
 
 uniform float LocalContrastStrength <
     ui_type = "slider";
     ui_label = "Local Contrast Strength";
     ui_tooltip = "Controls the strength of local contrast enhancement";
-    ui_category = "Local Contrast";
+    ui_category = "Local and Micro Contrast";
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.5;
+> = 0.08;
 
 uniform float LocalContrastRadius <
     ui_type = "slider";
     ui_label = "Local Contrast Radius";
     ui_tooltip = "Size of the area used for local contrast detection";
-    ui_category = "Local Contrast";
+    ui_category = "Local and Micro Contrast";
     ui_min = 1.0;
     ui_max = 10.0;
     ui_step = 0.1;
-> = 3.0;
+> = 4.5;
 
 // Micro Contrast Controls
 uniform bool EnableMicroContrast <
     ui_type = "checkbox";
     ui_label = "Enable Micro Contrast";
     ui_tooltip = "Toggles micro contrast enhancement";
-    ui_category = "Micro Contrast";
+    ui_category = "Local and Micro Contrast";
 > = true;
 
 uniform float MicroContrastStrength <
     ui_type = "slider";
     ui_label = "Micro Contrast Strength";
     ui_tooltip = "Controls the strength of micro contrast enhancement";
-    ui_category = "Micro Contrast";
+    ui_category = "Local and Micro Contrast";
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.3;
-
-uniform float DetailPreservation <
-    ui_type = "slider";
-    ui_label = "Detail Preservation";
-    ui_tooltip = "Prevents over-sharpening of fine details";
-    ui_category = "Micro Contrast";
-    ui_min = 0.75;
-    ui_max = 1.0;
-    ui_step = 0.01;
-> = 0.75;
-
-uniform float NoiseThreshold <
-    ui_type = "slider";
-    ui_label = "Noise Threshold";
-    ui_tooltip = "Prevents enhancement of image noise";
-    ui_category = "Micro Contrast";
-    ui_min = 0.0;
-    ui_max = 0.1;
-    ui_step = 0.001;
-> = 0.01;
+> = 0.04;
 
 // Add these debug uniforms
 uniform int DebugMode <
     ui_type = "combo";
     ui_label = "Debug View";
     ui_tooltip = "Shows different aspects of the micro-contrast enhancement";
-    ui_category = "Debug";
+    ui_category = "Local and Micro Contrast";
     ui_items = "Off\0Detail Map\0Noise Mask\0Enhancement Strength\0Detail Vectors\0";
 > = 0;
 
@@ -352,7 +264,7 @@ uniform float DebugMultiplier <
     ui_type = "slider";
     ui_label = "Debug Multiplier";
     ui_tooltip = "Multiplies the debug visualization strength";
-    ui_category = "Debug";
+    ui_category = "Local and Micro Contrast";
     ui_min = 1.0;
     ui_max = 10.0;
     ui_step = 0.1;
@@ -497,20 +409,32 @@ float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance,
     float dynamicRange = max(1.0, log2(1.0 / sceneAvgLuminance));
     float adjustmentRange = lerp(0.1, 2.0, saturate(dynamicRange / 10.0));
 
-    // Local adaptation with curve
-    float localAdaptation = pow(localLuminance / adaptationFactor, LocalAdjustmentCurve);
-    localAdaptation = lerp(1.0, localAdaptation, LocalAdjustmentStrength * adjustmentRange);
+    // Local adaptation with static curve and strength
+    float localAdaptation = pow(localLuminance / adaptationFactor, 0.0); 
+    localAdaptation = lerp(1.0, localAdaptation, 0.00);
 
     // Apply local adjustment to L channel
     labColor.x *= localAdaptation;
 
-    // Apply zonal adjustments in LAB space
-    float L = labColor.x / 100.0; // Normalize L to 0-1 range for easier calculations
+    // Convert back to RGB
+    float3 adjustedColor = Lab2RGB(labColor);
+
+    // Soft clipping to prevent harsh clipping
+    adjustedColor = 1.0 - exp(-adjustedColor);
+
+    // Calculate luminance
+    float luminance = dot(adjustedColor, float3(0.2126, 0.7152, 0.0722));
+
+    // Zonal Definitions
+    float HighlightsStart = 0.0;
+    float ShadowsEnd = 0.3;
+
+    // Calculate zonal weights
+    float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, luminance);
+    float highlightWeight = smootherstep(HighlightsStart, 0.5, luminance);
     
-    // Calculate zonal weights using L channel
-    float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, L);
-    float highlightWeight = smootherstep(HighlightsStart, 0.5, L);
-    float midtoneWeight = exp(-pow(L - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
+    // Independent midtone weight calculation
+    float midtoneWeight = exp(-pow(luminance - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
 
     // Normalize weights
     float totalWeight = shadowWeight + midtoneWeight + highlightWeight;
@@ -518,29 +442,23 @@ float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance,
     midtoneWeight /= totalWeight;
     highlightWeight /= totalWeight;
 
-    // Apply zonal adjustments to L channel
-    float zonalFactor = shadowWeight * ShadowAdjustment + 
-                       midtoneWeight * MidtoneAdjustment + 
-                       highlightWeight * HighlightAdjustment;
-    
-    labColor.x *= zonalFactor;
-    
-    // Convert back to RGB for tonemapping
-    float3 adjustedColor = Lab2RGB(labColor);
-
-    // Soft clipping to prevent harsh clipping
-    adjustedColor = 1.0 - exp(-adjustedColor);
-
-    // Apply tonemapping based on user choice
+    // **Select Tonemapping Curve Based on User Choice**
     float3 toneMapped;
     if (TonemapperType == 0) {
+        // ACES Tonemapping
         toneMapped = ACES_RRT(adjustedColor);
     } else {
+        // AgX Tonemapping
         toneMapped = AgX_Tonemap(adjustedColor);
     }
+    
+    // Calculate zonal tonemapping intensity
+    float zonalIntensity = shadowWeight * ShadowAdjustment + 
+                           midtoneWeight * MidtoneAdjustment + 
+                           highlightWeight * HighlightAdjustment;
 
-    // Blend between original and tonemapped
-    return lerp(adjustedColor, toneMapped, intensity);
+    // Blend between original and tonemapped based on zonal intensities
+    return lerp(adjustedColor, toneMapped, intensity * zonalIntensity);
 }
 
 // Apply Gamma Correction
@@ -579,7 +497,7 @@ float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : 
 
 // Save adaptation values
 float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
-    return tex2Dlod(Small, float4(AdaptFocalPoint, 0, AdaptMipLevels - AdaptPrecision));
+    return tex2Dlod(Small, float4(ADAPT_FOCAL_POINT, 0, AdaptMipLevels - ADAPT_PRECISION));
 }
 
 // Modified micro-contrast function with debug output
@@ -610,12 +528,12 @@ float4 ApplyMicroContrast(float3 color, float2 texcoord, out float4 debugOutput)
         float3 detailVector = labColor - sampleLab;
         
         // Separate weights for luminance and color channels
-        float lumWeight = exp(-abs(detailVector.x) * (1.0 - DetailPreservation));
-        float colorWeight = exp(-length(detailVector.yz) * (1.0 - DetailPreservation));
+        float lumWeight = exp(-abs(detailVector.x) * (1.0 - 1.0));
+        float colorWeight = exp(-length(detailVector.yz) * (1.0 - 1.0));
         
-        // Noise detection in LAB space (more accurate)
-        float lumNoise = smoothstep(NoiseThreshold * 5.0, NoiseThreshold * 20.0, abs(detailVector.x));
-        float colorNoise = smoothstep(NoiseThreshold * 3.0, NoiseThreshold * 12.0, length(detailVector.yz));
+        // Noise detection in LAB space
+        float lumNoise = smoothstep(0.0, 0.0, abs(detailVector.x));
+        float colorNoise = smoothstep(0.0, 0.0, length(detailVector.yz));
         
         float3 weight = float3(lumWeight, colorWeight, colorWeight);
         float3 noiseMask = float3(lumNoise, colorNoise, colorNoise);
@@ -692,10 +610,6 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     float4 color = tex2D(BackBuffer, texcoord);
     float4 originalColor = color;
 
-    // Apply exposure adjustment
-    float exposure = exp2(Exposure);
-    color.rgb *= exposure;
-
     // Get local luminance (already implemented)
     float localLuminance = CalculateLocalLuminance(texcoord);
     
@@ -731,6 +645,14 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
         }
     }
 
+    // Apply exposure adjustment with white point preservation
+    float whitePoint = 1.45; // Move the static white point here as a constant
+    float exposure = exp2(Exposure);
+    
+    // Apply exposure while maintaining the white point relationship
+    color.rgb *= exposure / whitePoint;
+    
+
     // Continue with existing tonemapping
     color.rgb = Tonemap_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
 
@@ -748,9 +670,9 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     color.rgb = lerp(color.rgb, float3(luma, luma, luma), saturate(saturation - 1.0));
     
     // Final adjustments
-    color.rgb *= Brightness;
-    color.rgb = ApplyGamma(color.rgb, Gamma);
     color.rgb = lerp(originalColor.rgb, color.rgb, GlobalOpacity);
+    color.rgb = ApplyGamma(color.rgb, Gamma);
+    color.rgb *= whitePoint;
 
     return saturate(color);
 }
