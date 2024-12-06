@@ -1,5 +1,6 @@
 
 > All shader code was written by Claude 3.5 Sonnet
+> 
 > Adapation code from: [luluco250's AdaptiveTonemapper.fx](https://github.com/luluco250/FXShaders/blob/master/Shaders/AdaptiveTonemapper.fx)
 
 ## AdaptiveLocalTonemapper:
