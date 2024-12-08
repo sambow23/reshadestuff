@@ -54,6 +54,26 @@ uniform bool UseRealGlass <
     ui_tooltip = "Enable to use real glass dispersion properties (BK7/Flint combination)";
 > = true;
 
+//////////////////////////////////////////////////
+// Blend Mode Parameters
+//////////////////////////////////////////////////
+
+uniform int BlendMode <
+    ui_type = "combo";
+    ui_label = "Blend Mode";
+    ui_tooltip = "How the effect blends with the original image";
+    ui_items = "Normal\0Multiply\0Screen\0Overlay\0Soft Light\0Color Dodge\0Linear Dodge (Add)\0Darken\0Lighten\0";
+> = 0;
+
+uniform float BlendStrength <
+    ui_type = "slider";
+    ui_label = "Blend Strength";
+    ui_tooltip = "Strength of the blend effect";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 1.0;
+
 // Common functions
 // These utilities provide physically-based calculations and transformations
 // for implementing realistic lens effects in screen space.
@@ -231,6 +251,61 @@ static const float3 FLINT_C = float3(0.00997743871, 0.0470450767, 111.886764);
 // Shader Logic
 //////////////////////////////////////////////////
 
+// Blend mode functions
+float3 Blend(float3 base, float3 blend, int mode, float opacity)
+{
+    float3 result = base;
+    
+    switch(mode)
+    {
+        case 0: // Normal
+            result = blend;
+            break;
+            
+        case 1: // Multiply
+            result = base * blend;
+            break;
+            
+        case 2: // Screen
+            result = 1.0 - (1.0 - base) * (1.0 - blend);
+            break;
+            
+        case 3: // Overlay
+            result = lerp(
+                2.0 * base * blend,
+                1.0 - 2.0 * (1.0 - base) * (1.0 - blend),
+                step(0.5, base)
+            );
+            break;
+            
+        case 4: // Soft Light
+            result = lerp(
+                2.0 * base * blend + base * base * (1.0 - 2.0 * blend),
+                sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend),
+                step(0.5, blend)
+            );
+            break;
+            
+        case 5: // Color Dodge
+            result = base / (1.0 - clamp(blend, 0.0, 0.999));
+            break;
+            
+        case 6: // Linear Dodge (Add)
+            result = base + blend;
+            break;
+            
+        case 7: // Darken
+            result = min(base, blend);
+            break;
+            
+        case 8: // Lighten
+            result = max(base, blend);
+            break;
+    }
+    
+    return lerp(base, result, opacity);
+}
+
 // Calculate dispersion offset for a specific wavelength
 float2 GetDispersionOffset(float wavelength, float2 centered_coord, float radius)
 {
@@ -308,9 +383,7 @@ float4 PhysicalChromaPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : 
     blend *= lerp(0.5, 1.0, colorIntensity);
     
     // Final mix preserving original color characteristics
-    float3 finalColor = lerp(originalColor, 
-                            lerp(originalColor, color, 0.8), // Reduce pure dispersion influence
-                            blend);
+    float3 finalColor = Blend(originalColor, color, BlendMode, blend * BlendStrength);
     
     return float4(finalColor, 1.0);
 }
