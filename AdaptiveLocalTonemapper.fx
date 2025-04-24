@@ -36,6 +36,57 @@ uniform int TonemapperType <
     ui_items = "ACES\0AgX\0";
 > = 1;
 
+// AgX-specific settings
+uniform float AgXHighlightGain <
+    ui_type = "slider";
+    ui_label = "AgX Highlight Gain";
+    ui_tooltip = "Increase dynamic range (in a fake way) by boosting highlights.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.0;
+    ui_max = 5.0;
+    ui_step = 0.01;
+> = 0.0;
+
+uniform float AgXHighlightGainGamma <
+    ui_type = "slider";
+    ui_label = "AgX Highlight Gain Threshold";
+    ui_tooltip = "A simple Gamma operation on the Luminance mask. Increase/decrease ranges of highlight boosted.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.0;
+    ui_max = 4.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float AgXPunchExposure <
+    ui_type = "slider";
+    ui_label = "AgX Punch Exposure";
+    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
+    ui_category = "Tone Mapping";
+    ui_min = -5.0;
+    ui_max = 5.0;
+    ui_step = 0.01;
+> = 2.0;
+
+uniform float AgXPunchSaturation <
+    ui_type = "slider";
+    ui_label = "AgX Punch Saturation";
+    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.5;
+    ui_max = 3.0;
+    ui_step = 0.01;
+> = 0.75;
+
+uniform float AgXPunchGamma <
+    ui_type = "slider";
+    ui_label = "AgX Punch Gamma";
+    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.001;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.3;
+
 uniform float Gamma <
     ui_type = "slider";
     ui_label = "Final Gamma";
@@ -44,7 +95,7 @@ uniform float Gamma <
     ui_min = 0.1;
     ui_max = 2.2;
     ui_step = 0.01;
-> = 0.50;
+> = 1.00;
 
 uniform float GlobalOpacity <
     ui_type = "slider";
@@ -455,6 +506,11 @@ float3 agx_look_lut(float3 color) {
 }
 
 float3 AgX_Tonemap(float3 color) {
+    // Apply highlight gain (pre-processing)
+    float imageLuma = dot(color, agx_luma_coefs);
+    float highlightMask = pow(imageLuma, AgXHighlightGainGamma);
+    color += color * highlightMask * AgXHighlightGain;
+    
     // Transform to AgX compressed space
     color = mul(agx_compressed_matrix, color);
     
@@ -466,6 +522,17 @@ float3 AgX_Tonemap(float3 color) {
     
     // Transform back from compressed space
     color = mul(agx_compressed_matrix_inverse, color);
+    
+    // Apply "punchy" look (post-processing)
+    // Apply gamma
+    color = agx_powsafe(color, AgXPunchGamma);
+    
+    // Apply saturation
+    float luma = dot(color, agx_luma_coefs);
+    color = lerp(luma.xxx, color, AgXPunchSaturation);
+    
+    // Apply exposure
+    color *= pow(2.0, AgXPunchExposure);
     
     return color;
 }
