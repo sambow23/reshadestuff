@@ -331,6 +331,16 @@ sampler LastAdapt {
     MipFilter = POINT;
 };
 
+texture LocalLuminanceHPassTex {
+    Format = R32F; // Store intermediate horizontal pass luminance
+};
+sampler LocalLuminanceHPassSampler { Texture = LocalLuminanceHPassTex; };
+
+texture LocalLuminanceTex {
+    Format = R32F; // Store final vertical pass luminance
+};
+sampler LocalLuminanceSampler { Texture = LocalLuminanceTex; };
+
 //#endregion
 
 //#region Helper Functions
@@ -378,32 +388,6 @@ float3 Lab2RGB(float3 lab)
         -0.9692660,  1.8760108,  0.0415560,
         0.0556434, -0.2040259,  1.0572252
     ), xyz));
-}
-
-// Calculate local luminance using bilateral filtering
-float CalculateLocalLuminance(float2 texcoord) {
-    float totalWeight = 0.0;
-    float filteredLuminance = 0.0;
-    float centerLuminance = dot(tex2D(BackBuffer, texcoord).rgb, float3(0.2126, 0.7152, 0.0722));
-
-    [unroll]
-    for (int x = -BILATERAL_SAMPLES / 2; x <= BILATERAL_SAMPLES / 2; x++) {
-        [unroll]
-        for (int y = -BILATERAL_SAMPLES / 2; y <= BILATERAL_SAMPLES / 2; y++) {
-            float2 offset = float2(x, y) * BILATERAL_RADIUS * ReShade::PixelSize;
-            float3 sampleColor = tex2D(BackBuffer, texcoord + offset).rgb;
-            float sampleLuminance = dot(sampleColor, float3(0.2126, 0.7152, 0.0722));
-
-            float spatialWeight = exp(-(x*x + y*y) / (2.0 * BILATERAL_SIGMA_SPATIAL * BILATERAL_SIGMA_SPATIAL));
-            float rangeWeight = exp(-abs(sampleLuminance - centerLuminance) / (2.0 * BILATERAL_SIGMA_RANGE * BILATERAL_SIGMA_RANGE));
-            float weight = spatialWeight * rangeWeight;
-
-            filteredLuminance += sampleLuminance * weight;
-            totalWeight += weight;
-        }
-    }
-
-    return filteredLuminance / totalWeight;
 }
 
 // ACES RRT Tonemapping function
@@ -488,9 +472,73 @@ float3 ApplyGamma(float3 color, float gamma) {
     return pow(max(color, 0.0001), 1.0 / gamma);
 }
 
+// Simple Gamut Mapping function
+float3 GamutMap(float3 color) {
+    float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
+    float maxComponent = max(color.r, max(color.g, color.b));
+    
+    // If any component is > 1, desaturate towards luminance
+    if (maxComponent > 1.0) {
+        return lerp(float3(luminance, luminance, luminance), color, 1.0 / maxComponent);
+    }
+    
+    // If any component is < 0 (less common but possible with some ops), 
+    // we can simply clamp for now, or implement a more complex mapping.
+    // Clamping negative values is generally acceptable here.
+    return max(color, 0.0);
+}
+
 //#endregion
 
 //#region Pixel Shaders
+
+// Separable Bilateral Filter - Horizontal Pass
+float4 PS_LocalLuminanceHPass(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    float totalWeight = 0.0;
+    float filteredLuminance = 0.0;
+    float centerLuminance = dot(tex2D(BackBuffer, texcoord).rgb, float3(0.2126, 0.7152, 0.0722));
+
+    [unroll]
+    for (int x = -BILATERAL_SAMPLES / 2; x <= BILATERAL_SAMPLES / 2; x++) {
+        float2 offset = float2(x, 0) * BILATERAL_RADIUS * ReShade::PixelSize.x;
+        float3 sampleColor = tex2D(BackBuffer, texcoord + offset).rgb;
+        float sampleLuminance = dot(sampleColor, float3(0.2126, 0.7152, 0.0722));
+
+        float spatialWeight = exp(-(x*x) / (2.0 * BILATERAL_SIGMA_SPATIAL * BILATERAL_SIGMA_SPATIAL));
+        float rangeWeight = exp(-abs(sampleLuminance - centerLuminance) / (2.0 * BILATERAL_SIGMA_RANGE * BILATERAL_SIGMA_RANGE));
+        float weight = spatialWeight * rangeWeight;
+
+        filteredLuminance += sampleLuminance * weight;
+        totalWeight += weight;
+    }
+
+    return filteredLuminance / max(totalWeight, 0.0001);
+}
+
+// Separable Bilateral Filter - Vertical Pass
+float4 PS_LocalLuminanceVPass(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    float totalWeight = 0.0;
+    float filteredLuminance = 0.0;
+    // Recalculate center luminance from original backbuffer for range comparison
+    float centerLuminanceOriginal = dot(tex2D(BackBuffer, texcoord).rgb, float3(0.2126, 0.7152, 0.0722));
+
+    [unroll]
+    for (int y = -BILATERAL_SAMPLES / 2; y <= BILATERAL_SAMPLES / 2; y++) {
+        float2 offset = float2(0, y) * BILATERAL_RADIUS * ReShade::PixelSize.y;
+        // Read horizontally filtered luminance from intermediate texture
+        float sampleLuminanceHFiltered = tex2D(LocalLuminanceHPassSampler, texcoord + offset).r;
+
+        float spatialWeight = exp(-(y*y) / (2.0 * BILATERAL_SIGMA_SPATIAL * BILATERAL_SIGMA_SPATIAL));
+        // Range weight uses difference between H-filtered sample and original center luminance
+        float rangeWeight = exp(-abs(sampleLuminanceHFiltered - centerLuminanceOriginal) / (2.0 * BILATERAL_SIGMA_RANGE * BILATERAL_SIGMA_RANGE));
+        float weight = spatialWeight * rangeWeight;
+
+        filteredLuminance += sampleLuminanceHFiltered * weight;
+        totalWeight += weight;
+    }
+
+    return filteredLuminance / max(totalWeight, 0.0001);
+}
 
 // Calculate adaptation values
 float4 PS_CalculateAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target {
@@ -628,8 +676,8 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     float4 color = tex2D(BackBuffer, texcoord);
     float4 originalColor = color;
 
-    // Get local luminance (already implemented)
-    float localLuminance = CalculateLocalLuminance(texcoord);
+    // Get local luminance from the pre-calculated texture
+    float localLuminance = tex2D(LocalLuminanceSampler, texcoord).r;
     
     // Get adaptation value (reusing existing code)
     float adaptedLuminance;
@@ -687,6 +735,9 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     color.rgb = lerp(color.rgb, boostedColor, skinProtect);
     color.rgb = lerp(color.rgb, float3(luma, luma, luma), saturate(saturation - 1.0));
     
+    // Apply Gamut Mapping before opacity blending and final scaling
+    color.rgb = GamutMap(color.rgb);
+
     // Final adjustments
     color.rgb = lerp(originalColor.rgb, color.rgb, GlobalOpacity);
 
@@ -709,6 +760,16 @@ technique LocalTonemapper {
         VertexShader = PostProcessVS;
         PixelShader = PS_SaveAdaptation;
         RenderTarget = LastAdaptTex;
+    }
+    pass LocalLuminanceHPass {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_LocalLuminanceHPass;
+        RenderTarget = LocalLuminanceHPassTex;
+    }
+    pass LocalLuminanceVPass {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_LocalLuminanceVPass;
+        RenderTarget = LocalLuminanceTex;
     }
     pass ApplyTonemapping {
         VertexShader = PostProcessVS;
