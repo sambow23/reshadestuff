@@ -1,7 +1,7 @@
 // Adaptive Local Tonemapper for ReShade
 // Author: CR
 // Credits: 
-//     100% of code written by: Claude 3.5 Sonnet
+//     100% of code written by multiple LLMs
 //     Some adaptation Code from luluco250's AdaptiveTonemapper.fx
 
 #include "ReShade.fxh"
@@ -86,7 +86,7 @@ uniform float LocalSaturationBoost <
 
 uniform float SkinToneProtection <
     ui_type = "slider";
-    ui_label = "Skin Tone Protection (Broken)";
+    ui_label = "Skin Tone Protection";
     ui_tooltip = "Higher values protect skin tones from oversaturation.";
     ui_category = "Color";
     ui_min = 0.0;
@@ -251,6 +251,37 @@ uniform float MicroContrastStrength <
     ui_step = 0.01;
 > = 0.04;
 
+uniform float MicroContrastFalloff <
+    ui_type = "slider";
+    ui_label = "Micro Contrast Falloff";
+    ui_tooltip = "Controls how quickly the micro contrast effect falls off with difference. Higher values retain more detail across larger differences.";
+    ui_category = "Local and Micro Contrast";
+    ui_min = 0.1;
+    ui_max = 5.0;
+    ui_step = 0.1;
+> = 2.0;
+
+uniform float MicroContrastNoiseThreshold <
+    ui_type = "slider";
+    ui_label = "Micro Contrast Noise Threshold";
+    ui_tooltip = "Luminance threshold below which differences are considered noise and not enhanced. Higher values reduce noise enhancement.";
+    ui_category = "Local and Micro Contrast";
+    ui_min = 0.001;
+    ui_max = 0.1;
+    ui_step = 0.001;
+> = 0.02;
+
+// Local adaptation control
+uniform float LocalAdaptationStrength <
+    ui_type = "slider";
+    ui_label = "Local Adaptation Strength";
+    ui_tooltip = "Controls how much the local luminance affects adaptation. Higher values increase local contrast.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.3;
+
 // Add these debug uniforms
 uniform int DebugMode <
     ui_type = "combo";
@@ -269,8 +300,6 @@ uniform float DebugMultiplier <
     ui_max = 10.0;
     ui_step = 0.1;
 > = 1.0;
-
-
 
 uniform float FrameTime <source = "frametime";>;
 
@@ -395,7 +424,6 @@ float3 AgX_Tonemap(float3 color) {
 }
 
 
-// **Modified Tonemap_Local Function**
 float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
 {
     float adaptationFactor = max(adaptedLuminance, 0.001);
@@ -404,15 +432,9 @@ float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance,
     // Convert to Lab space
     float3 labColor = RGB2Lab(adaptedColor);
 
-    // Automatic range adjustment
-    float sceneAvgLuminance = adaptedLuminance;
-    float dynamicRange = max(1.0, log2(1.0 / sceneAvgLuminance));
-    float adjustmentRange = lerp(0.1, 2.0, saturate(dynamicRange / 10.0));
-
-    // Local adaptation with static curve and strength
-    float localAdaptation = pow(localLuminance / adaptationFactor, 0.0); 
-    localAdaptation = lerp(1.0, localAdaptation, 0.00);
-
+    float localAdaptation = pow(localLuminance / adaptationFactor, 0.5); // Use 0.5 instead of 0.0 for a square root effect
+    localAdaptation = lerp(1.0, localAdaptation, LocalAdaptationStrength); // Use the new parameter instead of 0.0
+    
     // Apply local adjustment to L channel
     labColor.x *= localAdaptation;
 
@@ -500,12 +522,10 @@ float4 PS_SaveAdaptation(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Ta
     return tex2Dlod(Small, float4(ADAPT_FOCAL_POINT, 0, AdaptMipLevels - ADAPT_PRECISION));
 }
 
-// Modified micro-contrast function with debug output
 float4 ApplyMicroContrast(float3 color, float2 texcoord, out float4 debugOutput) {
     float3 labColor = RGB2Lab(color);
     float3 microDetail = 0.0;
-    float detailMask = 0.0;
-    float totalWeight = 0.0;
+    float3 totalWeight = 0.0;
     
     static const int numDirections = 8;
     static const float2 directions[numDirections] = {
@@ -527,13 +547,11 @@ float4 ApplyMicroContrast(float3 color, float2 texcoord, out float4 debugOutput)
         // Calculate detail in LAB space
         float3 detailVector = labColor - sampleLab;
         
-        // Separate weights for luminance and color channels
-        float lumWeight = exp(-abs(detailVector.x) * (1.0 - 1.0));
-        float colorWeight = exp(-length(detailVector.yz) * (1.0 - 1.0));
+        float lumWeight = exp(-abs(detailVector.x) / MicroContrastFalloff);
+        float colorWeight = exp(-length(detailVector.yz) / MicroContrastFalloff);
         
-        // Noise detection in LAB space
-        float lumNoise = smoothstep(0.0, 0.0, abs(detailVector.x));
-        float colorNoise = smoothstep(0.0, 0.0, length(detailVector.yz));
+        float lumNoise = smoothstep(0.0, MicroContrastNoiseThreshold, abs(detailVector.x));
+        float colorNoise = smoothstep(0.0, MicroContrastNoiseThreshold, length(detailVector.yz));
         
         float3 weight = float3(lumWeight, colorWeight, colorWeight);
         float3 noiseMask = float3(lumNoise, colorNoise, colorNoise);
@@ -545,11 +563,11 @@ float4 ApplyMicroContrast(float3 color, float2 texcoord, out float4 debugOutput)
         
         // Debug information
         debugDetailVectors += abs(detailVector);
-        debugNoiseMask += (lumNoise + colorNoise) * 0.5;
-        debugDetailStrength += (length(detailVector.x) + length(detailVector.yz)) * 0.5;
+        debugNoiseMask += float(lumNoise + colorNoise) * 0.5;  // Fixed: convert to scalar
+        debugDetailStrength += (abs(detailVector.x) + length(detailVector.yz)) * 0.5;  // Fixed: use abs() for x
     }
     
-    microDetail /= max(totalWeight, 0.001);
+    microDetail /= max(totalWeight, float3(0.001, 0.001, 0.001));
     
     // Apply enhancement in LAB space
     float3 enhancedLab = labColor + microDetail * MicroContrastStrength * float3(3.0, 1.5, 1.5);
