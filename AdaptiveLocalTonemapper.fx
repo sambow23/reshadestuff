@@ -3,6 +3,7 @@
 // Credits: 
 //     100% of code written by multiple LLMs
 //     Some adaptation Code from luluco250's AdaptiveTonemapper.fx
+//     AgX implementation based on Liam Collod's AgXc: https://github.com/MrLixm/AgXc
 
 #include "ReShade.fxh"
 #include "ReShadeUI.fxh"
@@ -18,6 +19,10 @@
 #define ADAPT_PRECISION 0
 
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
+
+// AgX LUT texture
+texture AgXLUTTex < source = "AgX-default_contrast.lut.png"; > { Width = 32*32; Height = 32; Format = RGBA8; };
+sampler2D AgXLUTSampler { Texture = AgXLUTTex; };
 
 //#region Uniforms
 
@@ -400,13 +405,70 @@ float3 ACES_RRT(float3 color) {
     return (color * (A * color + B)) / (color * (C * color + D) + E);
 }
 
-float3 AgX_Tonemap(float3 color) {
-    // AgX tonemapping curve approximation
-    // Parameters derived to match the AgX response
-    float3 tonemappedColor = color / (color + float3(0.155, 0.155, 0.155)) * 1.019; // Simple approximation
-    return tonemappedColor;
+// AgX constants and helper functions
+static const float3 agx_luma_coefs = float3(0.2126, 0.7152, 0.0722);
+static const float3x3 agx_compressed_matrix = float3x3(
+    0.84247906, 0.0784336, 0.07922375,
+    0.04232824, 0.87846864, 0.07916613,
+    0.04237565, 0.0784336, 0.87914297
+);
+static const float3x3 agx_compressed_matrix_inverse = float3x3(
+    1.1968790, -0.09802088, -0.09902975,
+    -0.05289685, 1.15190313, -0.09896118,
+    -0.05297163, -0.09804345, 1.15107368
+);
+
+float3 agx_powsafe(float3 color, float power) {
+    return pow(abs(color), power) * sign(color);
 }
 
+float3 agx_transform_to_log(float3 color) {
+    color = max(0.0, color);
+    color = (color < 0.00003051757) ? (0.00001525878 + color) : (color);
+    color = clamp(log2(color / 0.18), -10.0, 6.5);
+    return (color + 10.0) / 16.5;
+}
+
+float3 agx_look_lut(float3 color) {
+    float3 lut3D = color * 31.0;
+    
+    float2 lut2D[2];
+    // Front
+    lut2D[0].x = floor(lut3D.z) * 32.0 + lut3D.x;
+    lut2D[0].y = lut3D.y;
+    // Back
+    lut2D[1].x = ceil(lut3D.z) * 32.0 + lut3D.x;
+    lut2D[1].y = lut3D.y;
+    
+    // Convert from texel to texture coords
+    lut2D[0] = (lut2D[0] + 0.5) / float2(32*32, 32);
+    lut2D[1] = (lut2D[1] + 0.5) / float2(32*32, 32);
+    
+    // Bicubic LUT interpolation
+    float3 lutResult = lerp(
+        tex2D(AgXLUTSampler, lut2D[0]).rgb,
+        tex2D(AgXLUTSampler, lut2D[1]).rgb,
+        frac(lut3D.z)
+    );
+    
+    return agx_powsafe(lutResult, 2.2); // Decode gamma from LUT
+}
+
+float3 AgX_Tonemap(float3 color) {
+    // Transform to AgX compressed space
+    color = mul(agx_compressed_matrix, color);
+    
+    // Convert to log domain
+    color = agx_transform_to_log(color);
+    
+    // Apply AgX curve via LUT
+    color = agx_look_lut(color);
+    
+    // Transform back from compressed space
+    color = mul(agx_compressed_matrix_inverse, color);
+    
+    return color;
+}
 
 float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
 {
