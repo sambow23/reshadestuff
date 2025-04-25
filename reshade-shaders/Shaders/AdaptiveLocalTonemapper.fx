@@ -336,7 +336,17 @@ uniform float LocalAdaptationStrength <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.0;
+> = 0.25;
+
+uniform float LocalAdaptSmoothingMultiplier <
+    ui_type = "slider";
+    ui_label = "Local Adaptation Smoothing";
+    ui_tooltip = "Multiplier for adaptation time when smoothing local luminance changes. Higher values create smoother transitions but more lag in local adaptation.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.5;
+    ui_max = 5.0;
+    ui_step = 0.1;
+> = 1.0;
 
 // Add these debug uniforms
 uniform int DebugMode <
@@ -396,6 +406,11 @@ texture LocalLuminanceTex {
     Format = R32F; // Store final vertical pass luminance
 };
 sampler LocalLuminanceSampler { Texture = LocalLuminanceTex; };
+
+texture PrevLocalLuminanceTex {
+    Format = R32F; // Store previous frame's local luminance for temporal smoothing
+};
+sampler PrevLocalLuminanceSampler { Texture = PrevLocalLuminanceTex; };
 
 //#endregion
 
@@ -666,7 +681,20 @@ float4 PS_LocalLuminanceVPass(float4 pos : SV_Position, float2 texcoord : TEXCOO
         totalWeight += weight;
     }
 
-    return filteredLuminance / max(totalWeight, 0.0001);
+    float currentLuminance = filteredLuminance / max(totalWeight, 0.0001);
+    
+    // Apply temporal smoothing by blending with previous frame's luminance
+    float prevLuminance = tex2D(PrevLocalLuminanceSampler, texcoord).r;
+    
+    // Use the same adaptation time parameter used for global adaptation
+    float alpha = 0.0;
+    if (AdaptTime > 0.0)
+        alpha = 1.0 - exp(- (FrameTime * 0.001) / (AdaptTime * LocalAdaptSmoothingMultiplier));
+    else
+        alpha = 1.0; // Immediate adaptation if AdaptTime is zero
+    
+    // Blend current and previous luminance values
+    return lerp(prevLuminance, currentLuminance, alpha);
 }
 
 // Calculate adaptation values
@@ -797,6 +825,11 @@ float3 ApplyLocalContrast(float3 color, float2 texcoord) {
     labColor.yz += labDiff.yz * LocalContrastStrength * 1.2; // Color enhancement
     
     return Lab2RGB(labColor);
+}
+
+// Save current local luminance for the next frame
+float4 PS_SaveLocalLuminance(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return tex2D(LocalLuminanceSampler, texcoord);
 }
 
 // Main tonemapping pass
@@ -1044,6 +1077,11 @@ technique LocalTonemapper {
         VertexShader = PostProcessVS;
         PixelShader = PS_LocalLuminanceVPass;
         RenderTarget = LocalLuminanceTex;
+    }
+    pass SaveLocalLuminance {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_SaveLocalLuminance;
+        RenderTarget = PrevLocalLuminanceTex;
     }
     pass ApplyTonemapping {
         VertexShader = PostProcessVS;
