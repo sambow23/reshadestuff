@@ -65,7 +65,7 @@ uniform float AgXPunchExposure <
     ui_min = -5.0;
     ui_max = 5.0;
     ui_step = 0.01;
-> = 2.0;
+> = 1.0;
 
 uniform float AgXPunchSaturation <
     ui_type = "slider";
@@ -75,7 +75,7 @@ uniform float AgXPunchSaturation <
     ui_min = 0.5;
     ui_max = 3.0;
     ui_step = 0.01;
-> = 0.75;
+> = 0.90;
 
 uniform float AgXPunchGamma <
     ui_type = "slider";
@@ -85,7 +85,7 @@ uniform float AgXPunchGamma <
     ui_min = 0.001;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 1.3;
+> = 1.25;
 
 uniform float Gamma <
     ui_type = "slider";
@@ -336,7 +336,7 @@ uniform float LocalAdaptationStrength <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.3;
+> = 0.0;
 
 // Add these debug uniforms
 uniform int DebugMode <
@@ -808,7 +808,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Get local luminance from the pre-calculated texture
     float localLuminance = tex2D(LocalLuminanceSampler, texcoord).r;
     
-    // Get adaptation value (reusing existing code)
+    // Get adaptation value
     float adaptedLuminance;
     if (EnableAdaptation)
     {
@@ -820,56 +820,201 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
         adaptedLuminance = FixedLuminance;
     }
 
-    // Apply local contrast if enabled
-    if (EnableLocalContrast)
-    {
-        color.rgb = ApplyLocalContrast(color.rgb, texcoord);
-    }
-
-    // Apply micro contrast if enabled, with debug output
-    float4 debugOutput;
-    if (EnableMicroContrast)
-    {
-        float4 microContrastResult = ApplyMicroContrast(color.rgb, texcoord, debugOutput);
-        color.rgb = microContrastResult.rgb;
-        
-        // Show debug visualization if enabled
-        if (DebugMode > 0)
-        {
-            return debugOutput;
-        }
-    }
-
     // Apply exposure adjustment with white point preservation
-    float whitePoint = 1.2; // Move the static white point here as a constant
+    float whitePoint = 1.2;
     float exposure = exp2(Exposure);
     
     // Apply exposure while maintaining the white point relationship
     color.rgb *= exposure / whitePoint;
     color.rgb = ApplyGamma(color.rgb, Gamma);
     
-    // Continue with existing tonemapping
-    color.rgb = Tonemap_Local(color.rgb, localLuminance, adaptedLuminance, TonemappingIntensity);
+    // Convert to LAB space once for all LAB-based operations
+    float3 labColor = RGB2Lab(color.rgb);
+    float4 debugOutput = 0.0;
+    
+    // Apply all LAB-space operations
+    if (EnableLocalContrast || EnableMicroContrast || true) // Always apply LAB processing
+    {
+        // Apply local contrast in LAB space if enabled
+        if (EnableLocalContrast)
+        {
+            // Extract local contrast logic from ApplyLocalContrast function but keep in LAB
+            float3 labSum = 0;
+            float weightSum = 0;
+            
+            // Calculate local LAB statistics using bilateral filtering
+            [unroll]
+            for (int x = -2; x <= 2; x++) {
+                [unroll]
+                for (int y = -2; y <= 2; y++) {
+                    float2 offset = float2(x, y) * LocalContrastRadius * ReShade::PixelSize;
+                    float3 neighborLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb * exposure / whitePoint);
+                    
+                    // Spatial weight
+                    float spatialWeight = exp(-(x*x + y*y) / (2.0 * LocalContrastRadius * LocalContrastRadius));
+                    
+                    // Range weight in LAB space (more perceptually accurate)
+                    float labDist = length(neighborLab - labColor);
+                    float rangeWeight = exp(-labDist / (2.0 * 10.0)); // 10.0 is LAB sigma
+                    
+                    float weight = spatialWeight * rangeWeight;
+                    labSum += neighborLab * weight;
+                    weightSum += weight;
+                }
+            }
+            
+            float3 localLabAvg = labSum / weightSum;
+            
+            // Enhanced contrast in LAB space
+            float3 labDiff = labColor - localLabAvg;
+            
+            // Separate enhancement for L and a/b channels
+            labColor.x += labDiff.x * LocalContrastStrength * 2.0; // Luminance enhancement
+            labColor.yz += labDiff.yz * LocalContrastStrength * 1.2; // Color enhancement
+        }
+        
+        // Apply micro contrast in LAB space if enabled
+        if (EnableMicroContrast)
+        {
+            // Extract micro contrast logic but keep in LAB
+            float3 microDetail = 0.0;
+            float3 totalWeight = 0.0;
+            
+            static const int numDirections = 8;
+            static const float2 directions[numDirections] = {
+                float2(1, 0), float2(-1, 0),
+                float2(0, 1), float2(0, -1),
+                float2(0.707, 0.707), float2(-0.707, 0.707),
+                float2(0.707, -0.707), float2(-0.707, -0.707)
+            };
+            
+            float3 debugDetailVectors = 0.0;
+            float debugNoiseMask = 0.0;
+            float debugDetailStrength = 0.0;
+            
+            [unroll]
+            for(int i = 0; i < numDirections; i++) {
+                float2 offset = directions[i] * ReShade::PixelSize * 2.0;
+                float3 sampleLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb * exposure / whitePoint);
+                
+                // Calculate detail in LAB space
+                float3 detailVector = labColor - sampleLab;
+                
+                float lumWeight = exp(-abs(detailVector.x) / MicroContrastFalloff);
+                float colorWeight = exp(-length(detailVector.yz) / MicroContrastFalloff);
+                
+                float lumNoise = smoothstep(0.0, MicroContrastNoiseThreshold, abs(detailVector.x));
+                float colorNoise = smoothstep(0.0, MicroContrastNoiseThreshold, length(detailVector.yz));
+                
+                float3 weight = float3(lumWeight, colorWeight, colorWeight);
+                float3 noiseMask = float3(lumNoise, colorNoise, colorNoise);
+                
+                weight *= noiseMask;
+                
+                microDetail += detailVector * weight;
+                totalWeight += weight;
+                
+                // Debug information
+                debugDetailVectors += abs(detailVector);
+                debugNoiseMask += float(lumNoise + colorNoise) * 0.5;
+                debugDetailStrength += (abs(detailVector.x) + length(detailVector.yz)) * 0.5;
+            }
+            
+            microDetail /= max(totalWeight, float3(0.001, 0.001, 0.001));
+            
+            // Apply enhancement in LAB space
+            labColor += microDetail * MicroContrastStrength * float3(3.0, 1.5, 1.5);
+            
+            // Debug output handling
+            if (DebugMode > 0) {
+                switch(DebugMode) {
+                    case 1: debugOutput = float4(debugDetailVectors * DebugMultiplier / numDirections, 1.0); break;
+                    case 2: debugOutput = float4(debugNoiseMask.xxx * DebugMultiplier / numDirections, 1.0); break;
+                    case 3: debugOutput = float4(debugDetailStrength.xxx * DebugMultiplier / numDirections, 1.0); break;
+                    case 4: debugOutput = float4(normalize(microDetail) * 0.5 + 0.5, 1.0); break;
+                }
+            }
+        }
+        
+        // Apply zonal adjustments in LAB space
+        // L channel in LAB is perceptual luminance
+        float luminance = labColor.x / 100.0; // L ranges from 0-100, normalize to 0-1
+        
+        // Zonal Definitions
+        float HighlightsStart = 0.0;
+        float ShadowsEnd = 0.3;
 
-    // Apply the rest of the existing effects (color, brightness, gamma, etc.)
-    float luma = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
-    float saturation = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
-    float adjustedSaturation = pow(saturation, VibranceCurve);
+        // Calculate zonal weights based on LAB luminance
+        float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, luminance);
+        float highlightWeight = smootherstep(HighlightsStart, 0.5, luminance);
+        
+        // Independent midtone weight calculation
+        float midtoneWeight = exp(-pow(luminance - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
 
-    // Rest of the existing processing...
-    float skinTone = smoothstep(0.2, 0.6, color.r) * smoothstep(0.6, 0.2, color.g) * smoothstep(0.4, 0.2, color.b);
-    float skinProtect = lerp(1.0, saturate(1.0 - skinTone), SkinToneProtection);
-    float boostFactor = 1.0 + LocalSaturationBoost * (1.0 - adjustedSaturation) * skinProtect;
-    float3 boostedColor = lerp(float3(luma, luma, luma), color.rgb, boostFactor);
-    color.rgb = lerp(color.rgb, boostedColor, skinProtect);
-    color.rgb = lerp(color.rgb, float3(luma, luma, luma), saturate(saturation - 1.0));
+        // Normalize weights
+        float totalWeight = shadowWeight + midtoneWeight + highlightWeight;
+        shadowWeight /= totalWeight;
+        midtoneWeight /= totalWeight;
+        highlightWeight /= totalWeight;
+        
+        // Apply zonal luminance adjustments in LAB space
+        float zonalAdjustment = shadowWeight * ShadowAdjustment + 
+                               midtoneWeight * MidtoneAdjustment + 
+                               highlightWeight * HighlightAdjustment;
+        
+        // Apply to L channel (more perceptually accurate than RGB)
+        labColor.x *= zonalAdjustment;
+        
+        // Vibrance and saturation adjustments in LAB space
+        // LAB a/b channels represent chromaticity
+        float chromaValue = length(labColor.yz);
+        float saturationFactor = 1.0;
+        
+        // Use vibrance curve in LAB space
+        saturationFactor = pow(1.0 - min(1.0, chromaValue / 128.0), VibranceCurve) * LocalSaturationBoost + 1.0;
+        
+        // Skin tone protection in LAB space
+        // Skin tones fall within a specific region in LAB space
+        float skinTone = smoothstep(0.0, 0.2, 
+                          exp(-pow(labColor.y - 15, 2) / 150) * // a channel for redness
+                          exp(-pow(labColor.z - 15, 2) / 150)); // b channel for yellowness
+        
+        float skinProtect = lerp(1.0, saturate(1.0 - skinTone), SkinToneProtection);
+        
+        // Apply saturation and skin protection in LAB
+        labColor.yz *= lerp(1.0, saturationFactor, skinProtect);
+        
+        // Convert back to RGB just once
+        color.rgb = Lab2RGB(labColor);
+    }
+    
+    // Tone mapping after LAB operations
+    float localAdaptation = pow(localLuminance / adaptedLuminance, 0.5);
+    localAdaptation = lerp(1.0, localAdaptation, LocalAdaptationStrength);
+    
+    // **Select Tonemapping Curve Based on User Choice**
+    float3 toneMapped;
+    if (TonemapperType == 0) {
+        // ACES Tonemapping
+        toneMapped = ACES_RRT(color.rgb * localAdaptation);
+    } else {
+        // AgX Tonemapping
+        toneMapped = AgX_Tonemap(color.rgb * localAdaptation);
+    }
+    
+    // Apply tonemapping with intensity
+    color.rgb = lerp(color.rgb, toneMapped, TonemappingIntensity);
+    
+    // Show debug visualization if enabled
+    if (DebugMode > 0) {
+        return debugOutput;
+    }
     
     // Apply Gamut Mapping before opacity blending and final scaling
     color.rgb = GamutMap(color.rgb);
 
     // Final adjustments
     color.rgb = lerp(originalColor.rgb, color.rgb, GlobalOpacity);
-
     color.rgb *= whitePoint;
 
     return saturate(color);
