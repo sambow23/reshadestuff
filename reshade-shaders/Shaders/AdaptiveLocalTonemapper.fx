@@ -22,7 +22,7 @@ static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
 // AgX LUT texture
 texture AgXLUTTex < source = "AgX-default_contrast.lut.png"; > { Width = 32*32; Height = 32; Format = RGBA8; };
-sampler2D AgXLUTSampler { Texture = AgXLUTTex; };
+sampler2D AgXLUTSampler { Texture = AgXLUTTex; };   
 
 //#region Uniforms
 
@@ -860,7 +860,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply exposure while maintaining the white point relationship
     color.rgb *= exposure / whitePoint;
     color.rgb = ApplyGamma(color.rgb, Gamma);
-    
+
     // Convert to LAB space once for all LAB-based operations
     float3 labColor = RGB2Lab(color.rgb);
     float4 debugOutput = 0.0;
@@ -1021,6 +1021,9 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
         color.rgb = Lab2RGB(labColor);
     }
     
+    float adaptationFactor = max(adaptedLuminance, 0.001);
+    color.rgb /= adaptationFactor;
+
     // Tone mapping after LAB operations
     float localAdaptation = pow(localLuminance / adaptedLuminance, 0.5);
     localAdaptation = lerp(1.0, localAdaptation, LocalAdaptationStrength);
