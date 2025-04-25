@@ -97,6 +97,16 @@ uniform float Gamma <
     ui_step = 0.01;
 > = 1.00;
 
+uniform float LabGamma <
+    ui_type = "slider";
+    ui_label = "LAB Lightness Gamma";
+    ui_tooltip = "Applies a gamma curve to the perceptual lightness (L channel) after entering LAB space, before other LAB adjustments. Affects midtone brightness perception.";
+    ui_category = "Final Adjustments";
+    ui_min = 0.1;
+    ui_max = 2.2;
+    ui_step = 0.01;
+> = 1.25;
+
 uniform float GlobalOpacity <
     ui_type = "slider";
     ui_label = "Final Opacity";
@@ -864,7 +874,10 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Convert to LAB space once for all LAB-based operations
     float3 labColor = RGB2Lab(color.rgb);
     float4 debugOutput = 0.0;
-    
+
+    // Apply LAB Gamma adjustment to Lightness channel
+    labColor.x = pow(max(labColor.x / 100.0, 0.0001), 1.0 / LabGamma) * 100.0; // Normalize L (0-100 -> 0-1), apply gamma, scale back
+
     // Apply all LAB-space operations
     if (EnableLocalContrast || EnableMicroContrast || true) // Always apply LAB processing
     {
