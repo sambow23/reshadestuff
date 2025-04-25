@@ -26,66 +26,18 @@ sampler2D AgXLUTSampler { Texture = AgXLUTTex; };
 
 //#region Uniforms
 
-// Final Adjustments
-
-uniform int TonemapperType <
-    ui_type = "combo";
-    ui_label = "Tonemapper Type";
-    ui_tooltip = "Select the tonemapping algorithm to use. (ACES/AgX settings do not match each other, please re-adjust when switching tonemappers)";
-    ui_category = "Tone Mapping";
-    ui_items = "ACES\0AgX\0";
-> = 1;
-
-// AgX-specific settings
-uniform float AgXHighlightGain <
+// Basic Settings
+uniform float SceneBrightness <
     ui_type = "slider";
-    ui_label = "AgX Highlight Gain";
-    ui_tooltip = "Increase dynamic range (in a fake way) by boosting highlights.";
-    ui_category = "Tone Mapping";
-    ui_min = 0.0;
+    ui_label = "Scene Brightness";
+    ui_tooltip = "Universally scales brightness affecting LAB-based adjustments, preserving whitepoint. Applied alongside Exposure.";
+    ui_category = "Basic Settings";
+    ui_min = 0.1;
     ui_max = 5.0;
-    ui_step = 0.01;
-> = 0.0;
-
-uniform float AgXHighlightGainGamma <
-    ui_type = "slider";
-    ui_label = "AgX Highlight Gain Threshold";
-    ui_tooltip = "A simple Gamma operation on the Luminance mask. Increase/decrease ranges of highlight boosted.";
-    ui_category = "Tone Mapping";
-    ui_min = 0.0;
-    ui_max = 4.0;
     ui_step = 0.01;
 > = 1.0;
 
-uniform float AgXPunchExposure <
-    ui_type = "slider";
-    ui_label = "AgX Punch Exposure";
-    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
-    ui_category = "Tone Mapping";
-    ui_min = -5.0;
-    ui_max = 5.0;
-    ui_step = 0.01;
-> = 1.5;
-
-uniform float AgXPunchSaturation <
-    ui_type = "slider";
-    ui_label = "AgX Punch Saturation";
-    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
-    ui_category = "Tone Mapping";
-    ui_min = 0.5;
-    ui_max = 3.0;
-    ui_step = 0.01;
-> = 0.90;
-
-uniform float AgXPunchGamma <
-    ui_type = "slider";
-    ui_label = "AgX Punch Gamma";
-    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
-    ui_category = "Tone Mapping";
-    ui_min = 0.001;
-    ui_max = 2.0;
-    ui_step = 0.01;
-> = 1.25;
+// Final Adjustments
 
 uniform float LabGamma <
     ui_type = "slider";
@@ -134,9 +86,18 @@ uniform float Exposure <
     ui_min = -3.0;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 0.0;
+> = 1.0;
 
-// Tone Mapping
+// Tonemapper Settings
+
+uniform int TonemapperType <
+    ui_type = "combo";
+    ui_label = "Tonemapper Type";
+    ui_tooltip = "Select the tonemapping algorithm to use. (ACES/AgX settings do not match each other, please re-adjust when switching tonemappers)";
+    ui_category = "Tone Mapping";
+    ui_items = "ACES\0AgX\0";
+> = 1;
+
 uniform float TonemappingIntensity <
     ui_type = "slider";
     ui_label = "Tone Mapping Strength";
@@ -146,6 +107,57 @@ uniform float TonemappingIntensity <
     ui_max = 3.0;
     ui_step = 0.01;
 > = 1.0;
+
+// AgX-specific settings
+uniform float AgXHighlightGain <
+    ui_type = "slider";
+    ui_label = "AgX Highlight Gain";
+    ui_tooltip = "Increase dynamic range (in a fake way) by boosting highlights.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.0;
+    ui_max = 10.0;
+    ui_step = 0.01;
+> = 5.0;
+
+uniform float AgXHighlightGainGamma <
+    ui_type = "slider";
+    ui_label = "AgX Highlight Gain Threshold";
+    ui_tooltip = "A simple Gamma operation on the Luminance mask. Increase/decrease ranges of highlight boosted.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.0;
+    ui_max = 4.0;
+    ui_step = 0.01;
+> = 1.0;
+
+uniform float AgXPunchExposure <
+    ui_type = "slider";
+    ui_label = "AgX Punch Exposure";
+    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
+    ui_category = "Tone Mapping";
+    ui_min = -5.0;
+    ui_max = 5.0;
+    ui_step = 0.01;
+> = 1.5;
+
+uniform float AgXPunchSaturation <
+    ui_type = "slider";
+    ui_label = "AgX Punch Saturation";
+    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.5;
+    ui_max = 3.0;
+    ui_step = 0.01;
+> = 0.90;
+
+uniform float AgXPunchGamma <
+    ui_type = "slider";
+    ui_label = "AgX Punch Gamma";
+    ui_tooltip = "Post display conversion. Applied after the AgX transform.";
+    ui_category = "Tone Mapping";
+    ui_min = 0.001;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 1.25;
 
 // Color
 uniform float LocalSaturationBoost <
@@ -188,7 +200,7 @@ uniform float ShadowAdjustment <
     ui_min = 0.0;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 0.5;
+> = 1.0;
 
 uniform float MidtoneAdjustment <
     ui_type = "slider";
@@ -240,7 +252,7 @@ uniform float2 AdaptRange <
     ui_min = 0.001;
     ui_max = 2.0;
     ui_step = 0.001;
-> = float2(0.5, 2.0);
+> = float2(0.75, 2.0);
 
 uniform float AdaptTime <
     ui_type = "drag";
@@ -873,14 +885,16 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 
     // Apply exposure adjustment with white point preservation
     float whitePoint = 1.2;
-    float exposure = exp2(Exposure);
+    // Calculate combined brightness factor
+    float totalBrightness = exp2(Exposure) * SceneBrightness;
     
     // Apply exposure while maintaining the white point relationship
-    color.rgb *= exposure / whitePoint;
-    color.rgb = ApplyGamma(color.rgb, Gamma);
+    // color.rgb *= exposure / whitePoint; // Moved brightness application before LAB
+    // color.rgb = ApplyGamma(color.rgb, Gamma); // Moved Gamma application later
 
     // Convert to LAB space once for all LAB-based operations
-    float3 labColor = RGB2Lab(color.rgb);
+    // Apply total brightness before converting to LAB
+    float3 labColor = RGB2Lab(color.rgb * totalBrightness);
     float4 debugOutput = 0.0;
 
     // Apply LAB Gamma adjustment to Lightness channel
@@ -902,7 +916,8 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
                 [unroll]
                 for (int y = -2; y <= 2; y++) {
                     float2 offset = float2(x, y) * LocalContrastRadius * ReShade::PixelSize;
-                    float3 neighborLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb * exposure / whitePoint);
+                    // Apply total brightness to samples before LAB conversion
+                    float3 neighborLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb * totalBrightness);
                     
                     // Spatial weight
                     float spatialWeight = exp(-(x*x + y*y) / (2.0 * LocalContrastRadius * LocalContrastRadius));
@@ -949,7 +964,8 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
             [unroll]
             for(int i = 0; i < numDirections; i++) {
                 float2 offset = directions[i] * ReShade::PixelSize * 2.0;
-                float3 sampleLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb * exposure / whitePoint);
+                // Apply total brightness to samples before LAB conversion
+                float3 sampleLab = RGB2Lab(tex2D(BackBuffer, texcoord + offset).rgb * totalBrightness);
                 
                 // Calculate detail in LAB space
                 float3 detailVector = labColor - sampleLab;
@@ -1040,8 +1056,12 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
         
         // Convert back to RGB just once
         color.rgb = Lab2RGB(labColor);
+    } else {
+         // If no LAB ops were enabled, need to apply brightness here before tonemapping
+         color.rgb *= totalBrightness;
     }
     
+    // Apply adaptation factor. adaptedLuminance is based on original backbuffer, so divide after brightness/LAB ops
     float adaptationFactor = max(adaptedLuminance, 0.001);
     color.rgb /= adaptationFactor;
 
@@ -1049,30 +1069,35 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     float localAdaptation = pow(localLuminance / adaptedLuminance, 0.5);
     localAdaptation = lerp(1.0, localAdaptation, LocalAdaptationStrength);
     
+    float3 colorForTonemap = color.rgb * localAdaptation;
+    
     // **Select Tonemapping Curve Based on User Choice**
     float3 toneMapped;
     if (TonemapperType == 0) {
         // ACES Tonemapping
-        toneMapped = ACES_RRT(color.rgb * localAdaptation);
+        toneMapped = ACES_RRT(colorForTonemap);
     } else {
         // AgX Tonemapping
-        toneMapped = AgX_Tonemap(color.rgb * localAdaptation);
+        toneMapped = AgX_Tonemap(colorForTonemap);
     }
     
     // Apply tonemapping with intensity
     color.rgb = lerp(color.rgb, toneMapped, TonemappingIntensity);
     
-    // Show debug visualization if enabled
+    // Apply Gamut Mapping before final adjustments
+    color.rgb = GamutMap(color.rgb);
+
+    // Apply Final Gamma *after* tonemapping and gamut mapping
+    color.rgb = ApplyGamma(color.rgb, Gamma);
+    
+    // Show debug visualization if enabled (overwrites tonemapped result)
     if (DebugMode > 0) {
         return debugOutput;
     }
-    
-    // Apply Gamut Mapping before opacity blending and final scaling
-    color.rgb = GamutMap(color.rgb);
 
     // --- Final Blending ---
     float3 blendedColor;
-    float3 processedColor = color.rgb; // Rename for clarity
+    float3 processedColor = color.rgb; // Result after tonemapping, gamut, gamma
 
     switch (BlendMode)
     {
@@ -1109,8 +1134,8 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
             break;
     }
 
-    color.rgb = blendedColor;
-    color.rgb *= whitePoint; // Apply white point scaling *after* blending
+    // Apply white point scaling *after* blending
+    color.rgb = blendedColor * whitePoint;
 
     return saturate(color); // Final saturation clamp
 }
