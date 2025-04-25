@@ -65,7 +65,7 @@ uniform float AgXPunchExposure <
     ui_min = -5.0;
     ui_max = 5.0;
     ui_step = 0.01;
-> = 1.0;
+> = 1.5;
 
 uniform float AgXPunchSaturation <
     ui_type = "slider";
@@ -87,16 +87,6 @@ uniform float AgXPunchGamma <
     ui_step = 0.01;
 > = 1.25;
 
-uniform float Gamma <
-    ui_type = "slider";
-    ui_label = "Final Gamma";
-    ui_tooltip = "Adjusts the gamma curve of the final image. Lower values brighten shadows, higher values darken midtones.";
-    ui_category = "Final Adjustments";
-    ui_min = 0.1;
-    ui_max = 2.2;
-    ui_step = 0.01;
-> = 1.00;
-
 uniform float LabGamma <
     ui_type = "slider";
     ui_label = "LAB Lightness Gamma";
@@ -107,6 +97,16 @@ uniform float LabGamma <
     ui_step = 0.01;
 > = 1.25;
 
+uniform float Gamma <
+    ui_type = "slider";
+    ui_label = "Final Gamma";
+    ui_tooltip = "Adjusts the gamma curve of the final image. Lower values brighten shadows, higher values darken midtones.";
+    ui_category = "Final Adjustments";
+    ui_min = 0.1;
+    ui_max = 2.2;
+    ui_step = 0.01;
+> = 1.00;
+
 uniform float GlobalOpacity <
     ui_type = "slider";
     ui_label = "Final Opacity";
@@ -116,6 +116,14 @@ uniform float GlobalOpacity <
     ui_max = 1.0;
     ui_step = 0.01;
 > = 1.0;
+
+uniform int BlendMode <
+    ui_type = "combo";
+    ui_label = "Blend Mode";
+    ui_tooltip = "Selects how the processed image is blended with the original image.";
+    ui_category = "Final Adjustments";
+    ui_items = "Normal (Lerp)\0Additive\0Multiplicative\0Screen\0Overlay\0";
+> = 0; // Default to Normal (Lerp)
 
 // Exposure
 uniform float Exposure <
@@ -1062,11 +1070,49 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply Gamut Mapping before opacity blending and final scaling
     color.rgb = GamutMap(color.rgb);
 
-    // Final adjustments
-    color.rgb = lerp(originalColor.rgb, color.rgb, GlobalOpacity);
-    color.rgb *= whitePoint;
+    // --- Final Blending ---
+    float3 blendedColor;
+    float3 processedColor = color.rgb; // Rename for clarity
 
-    return saturate(color);
+    switch (BlendMode)
+    {
+        case 0: // Normal (Lerp)
+            blendedColor = lerp(originalColor.rgb, processedColor, GlobalOpacity);
+            break;
+        case 1: // Additive
+            blendedColor = originalColor.rgb + processedColor * GlobalOpacity;
+            break;
+        case 2: // Multiplicative
+            blendedColor = lerp(originalColor.rgb, originalColor.rgb * processedColor, GlobalOpacity);
+            // Alternate Multiplicative: blendedColor = originalColor.rgb * lerp(1.0, processedColor, GlobalOpacity);
+            break;
+        case 3: // Screen
+            blendedColor = 1.0 - (1.0 - originalColor.rgb) * (1.0 - lerp(0.0, processedColor, GlobalOpacity)); // Blend processed towards 0 opacity
+            // Alternate Screen: blendedColor = lerp(originalColor.rgb, 1.0 - (1.0 - originalColor.rgb) * (1.0 - processedColor), GlobalOpacity); // Lerp final screen result
+            break;
+        case 4: // Overlay
+        {
+            float3 overlayResult;
+            // Need to iterate per channel for the condition
+            for (int i = 0; i < 3; ++i) {
+                if (originalColor[i] <= 0.5) {
+                    overlayResult[i] = 2.0 * originalColor[i] * processedColor[i];
+                } else {
+                    overlayResult[i] = 1.0 - 2.0 * (1.0 - originalColor[i]) * (1.0 - processedColor[i]);
+                }
+            }
+            blendedColor = lerp(originalColor.rgb, overlayResult, GlobalOpacity);
+            break;
+        }
+        default: // Fallback to Normal
+            blendedColor = lerp(originalColor.rgb, processedColor, GlobalOpacity);
+            break;
+    }
+
+    color.rgb = blendedColor;
+    color.rgb *= whitePoint; // Apply white point scaling *after* blending
+
+    return saturate(color); // Final saturation clamp
 }
 
 //#endregion
