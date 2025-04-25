@@ -127,7 +127,7 @@ uniform float TonemappingIntensity <
     ui_min = 0.1;
     ui_max = 3.0;
     ui_step = 0.01;
-> = 1.5;
+> = 1.0;
 
 // Color
 uniform float LocalSaturationBoost <
@@ -277,7 +277,7 @@ uniform float LocalContrastStrength <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.08;
+> = 0.05;
 
 uniform float LocalContrastRadius <
     ui_type = "slider";
@@ -305,7 +305,7 @@ uniform float MicroContrastStrength <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.04;
+> = 0.10;
 
 uniform float MicroContrastFalloff <
     ui_type = "slider";
