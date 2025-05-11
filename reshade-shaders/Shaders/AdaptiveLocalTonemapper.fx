@@ -171,6 +171,33 @@ uniform float Bloom3Weight <
     ui_step = 0.01;
 > = 0.3;
 
+uniform bool EnableAdaptiveBloom <
+    ui_type = "checkbox";
+    ui_label = "Enable Adaptive Bloom";
+    ui_tooltip = "Toggles whether bloom intensity adapts to scene luminance.";
+    ui_category = "Bloom";
+> = true;
+
+uniform float AdaptiveBloomStrength <
+    ui_type = "slider";
+    ui_label = "Adaptive Bloom Strength";
+    ui_tooltip = "Controls how strongly bloom adapts to scene luminance. 0 = no adaptation, higher = stronger effect.";
+    ui_category = "Bloom";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.05;
+> = 0.75;
+
+uniform float BloomAdaptationReference <
+    ui_type = "slider";
+    ui_label = "Bloom Adaptation Reference";
+    ui_tooltip = "The reference scene luminance for bloom adaptation. Bloom is stronger below this, weaker above.";
+    ui_category = "Bloom";
+    ui_min = 0.1;
+    ui_max = 5.0;
+    ui_step = 0.05;
+> = 1.2;
+
 // Tonemapper Settings
 
 uniform int TonemapperType <
@@ -808,8 +835,21 @@ float4 PS_BloomPrefilter(float4 pos : SV_Position, float2 texcoord : TEXCOORD) :
     
     float contribution = max(0.0, brightness - BloomThreshold + soft * knee);
     
-    // Modulate by intensity here to control how much goes into bloom textures
-    contribution *= BloomIntensity; 
+    // Modulate by global intensity
+    contribution *= BloomIntensity;
+
+    // --- Adaptive Bloom based on scene adaptation ---    
+    if (EnableAdaptation && EnableAdaptiveBloom) // Only if main adaptation AND adaptive bloom are on
+    {
+        float adaptedLuminanceScene = tex2Dfetch(LastAdapt, int2(0,0), 0).x;
+        adaptedLuminanceScene = clamp(adaptedLuminanceScene, AdaptRange.x, AdaptRange.y); // Use same clamping as in MainPS
+
+        // Prevent division by zero or extremely small adaptedLuminanceScene values
+        adaptedLuminanceScene = max(adaptedLuminanceScene, 0.01);
+
+        float bloomAdaptationFactor = pow(BloomAdaptationReference / adaptedLuminanceScene, AdaptiveBloomStrength);
+        contribution *= bloomAdaptationFactor;
+    }
     
     // Apply bloom value to LAB channels, emphasizing the L channel
     // Tint is applied here so blurred colors are correct
@@ -822,17 +862,22 @@ float4 PS_BloomPrefilter(float4 pos : SV_Position, float2 texcoord : TEXCOORD) :
     
     // A gentle pre-blur can help reduce aliasing on downsampled textures
     float2 ps = ReShade::PixelSize;
-    float4 preBlurred = 0.0;
-    preBlurred += tex2D(BackBuffer, texcoord + float2(-0.5, -0.5) * ps) * 0.25;
-    preBlurred += tex2D(BackBuffer, texcoord + float2( 0.5, -0.5) * ps) * 0.25;
-    preBlurred += tex2D(BackBuffer, texcoord + float2(-0.5,  0.5) * ps) * 0.25;
-    preBlurred += tex2D(BackBuffer, texcoord + float2( 0.5,  0.5) * ps) * 0.25;
+    float4 preBlurredSource = tex2D(BackBuffer, texcoord); // Sample original backbuffer for preblur source
+    float3 preBlurredLab = RGB2Lab(preBlurredSource.rgb);
+
+    // Apply similar contribution scaling and tint to the preBlurred part
+    // This ensures the preblur component also adapts if adaptive bloom is on
+    float preblurContribution = contribution; // Use the already adapted contribution
+    float3 preBlurredTintedLab = float3(preBlurredLab.x * preblurContribution * BloomTint.r,
+                                        preBlurredLab.y * preblurContribution * BloomTint.g,
+                                        preBlurredLab.z * preblurContribution * BloomTint.b);
 
     // Blend the thresholded bloom color with a slightly pre-blurred version based on contribution
     // This helps soften edges before they hit the main blur passes
-    float blendFactor = saturate(contribution * 2.0); // More aggressive blend towards bloom color if contribution is high
+    float blendFactor = saturate(contribution * 2.0 / BloomIntensity); // Normalize blend factor against original intensity if needed
+                                                                     // to prevent overly aggressive blend when contribution is high due to adaptation
     
-    return float4(lerp(Lab2RGB(RGB2Lab(preBlurred.rgb) * contribution * BloomTint), bloomColorRGB, blendFactor), 1.0);
+    return float4(lerp(Lab2RGB(preBlurredTintedLab), bloomColorRGB, blendFactor), 1.0);
 }
 
 // Iterative Gaussian blur - Horizontal pass (inspired by PD80)
