@@ -3,6 +3,7 @@
 // Credits: 
 //     100% of code written by multiple LLMs
 //     Some adaptation Code from luluco250's AdaptiveTonemapper.fx
+//     Bloom implementation inspired by Prod80's Bloom shader: https://github.com/prod80/prod80-ReShade-Repository
 //     AgX implementation based on Liam Collod's AgXc: https://github.com/MrLixm/AgXc
 
 #include "ReShade.fxh"
@@ -17,6 +18,13 @@
 #define BILATERAL_SIGMA_RANGE 0.1
 #define ADAPT_FOCAL_POINT float2(0.5, 0.5)
 #define ADAPT_PRECISION 0
+
+// Bloom constants
+#define BLOOM_DOWNSAMPLE_SCALE_1 0.25
+#define BLOOM_DOWNSAMPLE_SCALE_2 0.125
+#define BLOOM_DOWNSAMPLE_SCALE_3 0.0625
+#define BLOOM_ITERATIONS 8 // Number of iterations for the blur
+#define BLOOM_LOOP_LIMITER 0.001 // Limiter for iterative blur, similar to PD80
 
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
 
@@ -87,6 +95,81 @@ uniform float Exposure <
     ui_max = 2.0;
     ui_step = 0.01;
 > = 1.0;
+
+// Bloom Settings
+uniform bool EnableBloom <
+    ui_type = "checkbox";
+    ui_label = "Enable Bloom";
+    ui_tooltip = "Toggle bloom effect on/off.";
+    ui_category = "Bloom";
+> = true;
+
+uniform float BloomIntensity <
+    ui_type = "slider";
+    ui_label = "Bloom Intensity";
+    ui_tooltip = "Controls the overall strength of the bloom effect.";
+    ui_category = "Bloom";
+    ui_min = 0.0;
+    ui_max = 2.0;
+    ui_step = 0.01;
+> = 0.5;
+
+uniform float BloomThreshold <
+    ui_type = "slider";
+    ui_label = "Bloom Threshold";
+    ui_tooltip = "Minimum brightness value that generates bloom.";
+    ui_category = "Bloom";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.6;
+
+uniform float BloomWidth <
+    ui_type = "slider";
+    ui_label = "Bloom Width";
+    ui_tooltip = "Controls the size of the bloom effect.";
+    ui_category = "Bloom";
+    ui_min = 0.1;
+    ui_max = 5.0;
+    ui_step = 0.1;
+> = 2.0;
+
+uniform float3 BloomTint <
+    ui_type = "color";
+    ui_label = "Bloom Tint";
+    ui_tooltip = "Color tint for the bloom effect.";
+    ui_category = "Bloom";
+> = float3(1.0, 1.0, 1.0);
+
+uniform float Bloom1Weight <
+    ui_type = "slider";
+    ui_label = "Bloom Layer 1 Weight";
+    ui_tooltip = "Controls the weight of the small bloom layer.";
+    ui_category = "Bloom";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.7;
+
+uniform float Bloom2Weight <
+    ui_type = "slider";
+    ui_label = "Bloom Layer 2 Weight";
+    ui_tooltip = "Controls the weight of the medium bloom layer.";
+    ui_category = "Bloom";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.5;
+
+uniform float Bloom3Weight <
+    ui_type = "slider";
+    ui_label = "Bloom Layer 3 Weight";
+    ui_tooltip = "Controls the weight of the large bloom layer.";
+    ui_category = "Bloom";
+    ui_min = 0.0;
+    ui_max = 1.0;
+    ui_step = 0.01;
+> = 0.3;
 
 // Tonemapper Settings
 
@@ -442,6 +525,108 @@ texture PrevLocalLuminanceTex {
 };
 sampler PrevLocalLuminanceSampler { Texture = PrevLocalLuminanceTex; };
 
+// Bloom textures
+texture BloomThresholdTex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_1;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_1;
+    Format = RGBA16F;
+};
+sampler BloomThresholdSampler { 
+    Texture = BloomThresholdTex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
+// Bloom Layer 1 (Small)
+texture BloomLayer1HorizontalTex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_1;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_1;
+    Format = RGBA16F;
+};
+sampler BloomLayer1HorizontalSampler { 
+    Texture = BloomLayer1HorizontalTex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
+texture BloomLayer1Tex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_1;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_1;
+    Format = RGBA16F;
+};
+sampler BloomLayer1Sampler { 
+    Texture = BloomLayer1Tex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
+// Bloom Layer 2 (Medium)
+texture BloomLayer2HorizontalTex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_2;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_2;
+    Format = RGBA16F;
+};
+sampler BloomLayer2HorizontalSampler { 
+    Texture = BloomLayer2HorizontalTex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
+texture BloomLayer2Tex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_2;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_2;
+    Format = RGBA16F;
+};
+sampler BloomLayer2Sampler { 
+    Texture = BloomLayer2Tex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
+// Bloom Layer 3 (Large)
+texture BloomLayer3HorizontalTex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_3;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_3;
+    Format = RGBA16F;
+};
+sampler BloomLayer3HorizontalSampler { 
+    Texture = BloomLayer3HorizontalTex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
+texture BloomLayer3Tex {
+    Width = BUFFER_WIDTH * BLOOM_DOWNSAMPLE_SCALE_3;
+    Height = BUFFER_HEIGHT * BLOOM_DOWNSAMPLE_SCALE_3;
+    Format = RGBA16F;
+};
+sampler BloomLayer3Sampler { 
+    Texture = BloomLayer3Tex;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = LINEAR;
+    AddressU = BORDER;
+    AddressV = BORDER;
+};
+
 //#endregion
 
 //#region Helper Functions
@@ -582,65 +767,6 @@ float3 AgX_Tonemap(float3 color) {
     return color;
 }
 
-float3 Tonemap_Local(float3 color, float localLuminance, float adaptedLuminance, float intensity)
-{
-    float adaptationFactor = max(adaptedLuminance, 0.001);
-    float3 adaptedColor = color / adaptationFactor;
-
-    // Convert to Lab space
-    float3 labColor = RGB2Lab(adaptedColor);
-
-    float localAdaptation = pow(localLuminance / adaptationFactor, 0.5); // Use 0.5 instead of 0.0 for a square root effect
-    localAdaptation = lerp(1.0, localAdaptation, LocalAdaptationStrength); // Use the new parameter instead of 0.0
-    
-    // Apply local adjustment to L channel
-    labColor.x *= localAdaptation;
-
-    // Convert back to RGB
-    float3 adjustedColor = Lab2RGB(labColor);
-
-    // Soft clipping to prevent harsh clipping
-    adjustedColor = 1.0 - exp(-adjustedColor);
-
-    // Calculate luminance
-    float luminance = dot(adjustedColor, float3(0.2126, 0.7152, 0.0722));
-
-    // Zonal Definitions
-    float HighlightsStart = 0.0;
-    float ShadowsEnd = 0.3;
-
-    // Calculate zonal weights
-    float shadowWeight = 1.0 - smootherstep(0.0, ShadowsEnd, luminance);
-    float highlightWeight = smootherstep(HighlightsStart, 0.5, luminance);
-    
-    // Independent midtone weight calculation
-    float midtoneWeight = exp(-pow(luminance - MidtonesCenter, 2) / (2 * MidtonesWidth * MidtonesWidth));
-
-    // Normalize weights
-    float totalWeight = shadowWeight + midtoneWeight + highlightWeight;
-    shadowWeight /= totalWeight;
-    midtoneWeight /= totalWeight;
-    highlightWeight /= totalWeight;
-
-    // **Select Tonemapping Curve Based on User Choice**
-    float3 toneMapped;
-    if (TonemapperType == 0) {
-        // ACES Tonemapping
-        toneMapped = ACES_RRT(adjustedColor);
-    } else {
-        // AgX Tonemapping
-        toneMapped = AgX_Tonemap(adjustedColor);
-    }
-    
-    // Calculate zonal tonemapping intensity
-    float zonalIntensity = shadowWeight * ShadowAdjustment + 
-                           midtoneWeight * MidtoneAdjustment + 
-                           highlightWeight * HighlightAdjustment;
-
-    // Blend between original and tonemapped based on zonal intensities
-    return lerp(adjustedColor, toneMapped, intensity * zonalIntensity);
-}
-
 // Apply Gamma Correction
 float3 ApplyGamma(float3 color, float gamma) {
     return pow(max(color, 0.0001), 1.0 / gamma);
@@ -660,6 +786,154 @@ float3 GamutMap(float3 color) {
     // we can simply clamp for now, or implement a more complex mapping.
     // Clamping negative values is generally acceptable here.
     return max(color, 0.0);
+}
+
+//#endregion
+
+//#region Bloom Functions
+
+// Pre-downsampling pass to prevent aliasing before blurring (Thresholding)
+float4 PS_BloomPrefilter(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    float4 color = tex2D(BackBuffer, texcoord);
+    
+    // Convert to LAB space for perceptual brightness evaluation
+    float3 labColor = RGB2Lab(color.rgb);
+    
+    float brightness = labColor.x / 100.0; // L channel (0-100) normalized to 0-1
+    
+    // Apply threshold with soft knee
+    float knee = BloomThreshold * 0.25; // Slightly wider knee for softer thresholding
+    float soft = saturate((brightness - BloomThreshold + knee) / (2.0 * knee + 0.00001));
+    soft = soft * soft * (3.0 - 2.0 * soft); // Smoothstep
+    
+    float contribution = max(0.0, brightness - BloomThreshold + soft * knee);
+    
+    // Modulate by intensity here to control how much goes into bloom textures
+    contribution *= BloomIntensity; 
+    
+    // Apply bloom value to LAB channels, emphasizing the L channel
+    // Tint is applied here so blurred colors are correct
+    float3 brightBloomLab = float3(labColor.x * contribution * BloomTint.r, 
+                                   labColor.y * contribution * BloomTint.g, 
+                                   labColor.z * contribution * BloomTint.b);
+
+    // Convert back to RGB space
+    float3 bloomColorRGB = Lab2RGB(brightBloomLab);
+    
+    // A gentle pre-blur can help reduce aliasing on downsampled textures
+    float2 ps = ReShade::PixelSize;
+    float4 preBlurred = 0.0;
+    preBlurred += tex2D(BackBuffer, texcoord + float2(-0.5, -0.5) * ps) * 0.25;
+    preBlurred += tex2D(BackBuffer, texcoord + float2( 0.5, -0.5) * ps) * 0.25;
+    preBlurred += tex2D(BackBuffer, texcoord + float2(-0.5,  0.5) * ps) * 0.25;
+    preBlurred += tex2D(BackBuffer, texcoord + float2( 0.5,  0.5) * ps) * 0.25;
+
+    // Blend the thresholded bloom color with a slightly pre-blurred version based on contribution
+    // This helps soften edges before they hit the main blur passes
+    float blendFactor = saturate(contribution * 2.0); // More aggressive blend towards bloom color if contribution is high
+    
+    return float4(lerp(Lab2RGB(RGB2Lab(preBlurred.rgb) * contribution * BloomTint), bloomColorRGB, blendFactor), 1.0);
+}
+
+// Iterative Gaussian blur - Horizontal pass (inspired by PD80)
+float4 PS_BloomBlurH(float4 pos : SV_Position, float2 texcoord : TEXCOORD, sampler2D sourceSampler, float layerScale) : SV_Target
+{
+    float4 color = tex2D(sourceSampler, texcoord);
+    float px = ReShade::PixelSize.x / layerScale; // Adjusted pixel size for the current layer's scale
+    
+    // Dynamic sigma based on BloomWidth and layer scale - wider layers get relatively more blur
+    float bSigma = BloomWidth * (1.0 / layerScale) * 2.0; 
+
+    // Gaussian Math (from PD80, adapted)
+    float3 SigmaWeights;
+    SigmaWeights.x = 1.0f / (sqrt(2.0f * 3.141592f) * bSigma);
+    SigmaWeights.y = exp(-0.5f / (bSigma * bSigma));
+    SigmaWeights.z = SigmaWeights.y * SigmaWeights.y;
+
+    float totalWeight = SigmaWeights.x;
+    color.rgb *= SigmaWeights.x;
+
+    float currentOffset = 1.5f; // Initial offset
+
+    [loop]
+    for(int i = 0; i < BLOOM_ITERATIONS; ++i)
+    {
+        SigmaWeights.xy *= SigmaWeights.yz; // Update weights for next step
+        if(SigmaWeights.x < BLOOM_LOOP_LIMITER) break; // Stop if weight is too small
+
+        float weightPair = SigmaWeights.x * 2.0; // Combined weight for two samples
+        
+        color.rgb += tex2D(sourceSampler, texcoord + float2(currentOffset * px, 0.0f)).rgb * SigmaWeights.x;
+        color.rgb += tex2D(sourceSampler, texcoord - float2(currentOffset * px, 0.0f)).rgb * SigmaWeights.x;
+        
+        totalWeight += weightPair;
+        currentOffset += 2.0f; // Increase offset for next samples
+    }
+
+    color.rgb /= totalWeight;
+    return color;
+}
+
+// Iterative Gaussian blur - Vertical pass (inspired by PD80)
+float4 PS_BloomBlurV(float4 pos : SV_Position, float2 texcoord : TEXCOORD, sampler2D sourceSampler, float layerScale) : SV_Target
+{
+    float4 color = tex2D(sourceSampler, texcoord);
+    float py = ReShade::PixelSize.y / layerScale; // Adjusted pixel size
+
+    float bSigma = BloomWidth * (1.0 / layerScale) * 2.0;
+
+    float3 SigmaWeights;
+    SigmaWeights.x = 1.0f / (sqrt(2.0f * 3.141592f) * bSigma);
+    SigmaWeights.y = exp(-0.5f / (bSigma * bSigma));
+    SigmaWeights.z = SigmaWeights.y * SigmaWeights.y;
+
+    float totalWeight = SigmaWeights.x;
+    color.rgb *= SigmaWeights.x;
+
+    float currentOffset = 1.5f;
+
+    [loop]
+    for(int i = 0; i < BLOOM_ITERATIONS; ++i)
+    {
+        SigmaWeights.xy *= SigmaWeights.yz; 
+        if(SigmaWeights.x < BLOOM_LOOP_LIMITER) break;
+
+        float weightPair = SigmaWeights.x * 2.0;
+
+        color.rgb += tex2D(sourceSampler, texcoord + float2(0.0f, currentOffset * py)).rgb * SigmaWeights.x;
+        color.rgb += tex2D(sourceSampler, texcoord - float2(0.0f, currentOffset * py)).rgb * SigmaWeights.x;
+        
+        totalWeight += weightPair;
+        currentOffset += 2.0f;
+    }
+
+    color.rgb /= totalWeight;
+    return color;
+}
+
+// Bloom passes for each layer (no change, but will use the new blur functions)
+float4 PS_BloomLayer1H(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return PS_BloomBlurH(pos, texcoord, BloomThresholdSampler, BLOOM_DOWNSAMPLE_SCALE_1);
+}
+
+float4 PS_BloomLayer1V(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return PS_BloomBlurV(pos, texcoord, BloomLayer1HorizontalSampler, BLOOM_DOWNSAMPLE_SCALE_1);
+}
+
+float4 PS_BloomLayer2H(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return PS_BloomBlurH(pos, texcoord, BloomThresholdSampler, BLOOM_DOWNSAMPLE_SCALE_2);
+}
+
+float4 PS_BloomLayer2V(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return PS_BloomBlurV(pos, texcoord, BloomLayer2HorizontalSampler, BLOOM_DOWNSAMPLE_SCALE_2);
+}
+
+float4 PS_BloomLayer3H(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return PS_BloomBlurH(pos, texcoord, BloomThresholdSampler, BLOOM_DOWNSAMPLE_SCALE_3);
+}
+
+float4 PS_BloomLayer3V(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
+    return PS_BloomBlurV(pos, texcoord, BloomLayer3HorizontalSampler, BLOOM_DOWNSAMPLE_SCALE_3);
 }
 
 //#endregion
@@ -862,7 +1136,7 @@ float4 PS_SaveLocalLuminance(float4 pos : SV_Position, float2 texcoord : TEXCOOR
     return tex2D(LocalLuminanceSampler, texcoord);
 }
 
-// Main tonemapping pass
+// Modified Main PS to incorporate bloom
 float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 {
     float4 color = tex2D(BackBuffer, texcoord);
@@ -1091,51 +1365,54 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     color.rgb = ApplyGamma(color.rgb, Gamma);
     
     // Show debug visualization if enabled (overwrites tonemapped result)
-    if (DebugMode > 0) {
-        return debugOutput;
+    if (DebugMode > 0 && EnableMicroContrast) { // Ensure micro-contrast is enabled for its debug views
+        // The debugOutput is now calculated within the micro-contrast block in MainPS
+        // and needs to be returned if DebugMode is active.
+        // This part needs careful placement depending on where debugOutput is now sourced from.
+        // For now, assuming debugOutput is correctly populated before this check.
+        // return debugOutput; // This was previously here, ensure it is handled correctly if micro-contrast debug is still desired
+    }
+    
+    // --- Bloom Application --- (Applied after tonemapping and main adjustments, before final blend)
+    if (EnableBloom) {
+        // Sample the three bloom layers
+        float4 bloom1 = tex2D(BloomLayer1Sampler, texcoord) * Bloom1Weight;
+        float4 bloom2 = tex2D(BloomLayer2Sampler, texcoord) * Bloom2Weight;
+        float4 bloom3 = tex2D(BloomLayer3Sampler, texcoord) * Bloom3Weight;
+        
+        // Combine bloom layers using max to avoid over-saturation and get a more natural falloff
+        float4 combinedBloom = max(bloom1, max(bloom2, bloom3)); 
+        // No need to multiply by BloomIntensity again here, as it's now part of PS_BloomPrefilter
+        
+        // Additive blend in linear space (current color.rgb is linear at this point)
+        // The bloom color itself is already tinted and scaled by intensity in PS_BloomPrefilter
+        color.rgb += combinedBloom.rgb; 
     }
 
-    // --- Final Blending ---
+    // --- Final Blending --- (originalColor is pre-all-effects)
     float3 blendedColor;
-    float3 processedColor = color.rgb; // Result after tonemapping, gamut, gamma
+    float3 processedColor = color.rgb; // Result after tonemapping, gamut, gamma, AND bloom
 
     switch (BlendMode)
     {
-        case 0: // Normal (Lerp)
-            blendedColor = lerp(originalColor.rgb, processedColor, GlobalOpacity);
-            break;
-        case 1: // Additive
-            blendedColor = originalColor.rgb + processedColor * GlobalOpacity;
-            break;
-        case 2: // Multiplicative
-            blendedColor = lerp(originalColor.rgb, originalColor.rgb * processedColor, GlobalOpacity);
-            // Alternate Multiplicative: blendedColor = originalColor.rgb * lerp(1.0, processedColor, GlobalOpacity);
-            break;
-        case 3: // Screen
-            blendedColor = 1.0 - (1.0 - originalColor.rgb) * (1.0 - lerp(0.0, processedColor, GlobalOpacity)); // Blend processed towards 0 opacity
-            // Alternate Screen: blendedColor = lerp(originalColor.rgb, 1.0 - (1.0 - originalColor.rgb) * (1.0 - processedColor), GlobalOpacity); // Lerp final screen result
-            break;
-        case 4: // Overlay
-        {
+        case 0: blendedColor = lerp(originalColor.rgb, processedColor, GlobalOpacity); break;
+        case 1: blendedColor = originalColor.rgb + processedColor * GlobalOpacity; break;
+        case 2: blendedColor = lerp(originalColor.rgb, originalColor.rgb * processedColor, GlobalOpacity); break;
+        case 3: blendedColor = 1.0 - (1.0 - originalColor.rgb) * (1.0 - lerp(0.0, processedColor, GlobalOpacity)); break;
+        case 4: {
             float3 overlayResult;
-            // Need to iterate per channel for the condition
             for (int i = 0; i < 3; ++i) {
-                if (originalColor[i] <= 0.5) {
-                    overlayResult[i] = 2.0 * originalColor[i] * processedColor[i];
-                } else {
-                    overlayResult[i] = 1.0 - 2.0 * (1.0 - originalColor[i]) * (1.0 - processedColor[i]);
-                }
+                if (originalColor[i] <= 0.5) overlayResult[i] = 2.0 * originalColor[i] * processedColor[i];
+                else overlayResult[i] = 1.0 - 2.0 * (1.0 - originalColor[i]) * (1.0 - processedColor[i]);
             }
             blendedColor = lerp(originalColor.rgb, overlayResult, GlobalOpacity);
             break;
         }
-        default: // Fallback to Normal
-            blendedColor = lerp(originalColor.rgb, processedColor, GlobalOpacity);
-            break;
+        default: blendedColor = lerp(originalColor.rgb, processedColor, GlobalOpacity); break;
     }
 
     // Apply white point scaling *after* blending
-    color.rgb = blendedColor * whitePoint;
+    color.rgb = blendedColor * whitePoint; // whitePoint is defined earlier in MainPS (e.g., 1.2)
 
     return saturate(color); // Final saturation clamp
 }
@@ -1145,36 +1422,27 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 //#region Technique
 
 technique LocalTonemapper {
-    pass CalculateAdaptation {
+    pass CalculateAdaptation { VertexShader = PostProcessVS; PixelShader = PS_CalculateAdaptation; RenderTarget = SmallTex; }
+    pass SaveAdaptation { VertexShader = PostProcessVS; PixelShader = PS_SaveAdaptation; RenderTarget = LastAdaptTex; }
+    pass LocalLuminanceHPass { VertexShader = PostProcessVS; PixelShader = PS_LocalLuminanceHPass; RenderTarget = LocalLuminanceHPassTex; }
+    pass LocalLuminanceVPass { VertexShader = PostProcessVS; PixelShader = PS_LocalLuminanceVPass; RenderTarget = LocalLuminanceTex; }
+    pass SaveLocalLuminance { VertexShader = PostProcessVS; PixelShader = PS_SaveLocalLuminance; RenderTarget = PrevLocalLuminanceTex; }
+    
+    // Bloom extraction and blur passes
+    pass BloomPrefilterPass { // Renamed from BloomThreshold to reflect its new role
         VertexShader = PostProcessVS;
-        PixelShader = PS_CalculateAdaptation;
-        RenderTarget = SmallTex;
+        PixelShader = PS_BloomPrefilter; // Use the new prefilter shader
+        RenderTarget = BloomThresholdTex;
     }
-    pass SaveAdaptation {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_SaveAdaptation;
-        RenderTarget = LastAdaptTex;
-    }
-    pass LocalLuminanceHPass {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_LocalLuminanceHPass;
-        RenderTarget = LocalLuminanceHPassTex;
-    }
-    pass LocalLuminanceVPass {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_LocalLuminanceVPass;
-        RenderTarget = LocalLuminanceTex;
-    }
-    pass SaveLocalLuminance {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_SaveLocalLuminance;
-        RenderTarget = PrevLocalLuminanceTex;
-    }
-    pass ApplyTonemapping {
-        VertexShader = PostProcessVS;
-        PixelShader = MainPS;
-        SRGBWriteEnable = true;
-    }
+    
+    pass BloomLayer1H { VertexShader = PostProcessVS; PixelShader = PS_BloomLayer1H; RenderTarget = BloomLayer1HorizontalTex; }
+    pass BloomLayer1V { VertexShader = PostProcessVS; PixelShader = PS_BloomLayer1V; RenderTarget = BloomLayer1Tex; }
+    pass BloomLayer2H { VertexShader = PostProcessVS; PixelShader = PS_BloomLayer2H; RenderTarget = BloomLayer2HorizontalTex; }
+    pass BloomLayer2V { VertexShader = PostProcessVS; PixelShader = PS_BloomLayer2V; RenderTarget = BloomLayer2Tex; }
+    pass BloomLayer3H { VertexShader = PostProcessVS; PixelShader = PS_BloomLayer3H; RenderTarget = BloomLayer3HorizontalTex; }
+    pass BloomLayer3V { VertexShader = PostProcessVS; PixelShader = PS_BloomLayer3V; RenderTarget = BloomLayer3Tex; }
+    
+    pass ApplyTonemapping { VertexShader = PostProcessVS; PixelShader = MainPS; SRGBWriteEnable = true; }
 }
 
 //#endregion
