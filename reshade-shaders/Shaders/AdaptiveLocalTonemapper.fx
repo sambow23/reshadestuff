@@ -23,7 +23,7 @@
 #define BLOOM_DOWNSAMPLE_SCALE_1 0.25
 #define BLOOM_DOWNSAMPLE_SCALE_2 0.125
 #define BLOOM_DOWNSAMPLE_SCALE_3 0.0625
-#define BLOOM_ITERATIONS 8 // Number of iterations for the blur
+#define BLOOM_ITERATIONS 64 // Number of iterations for the blur
 #define BLOOM_LOOP_LIMITER 0.001 // Limiter for iterative blur, similar to PD80
 
 static const int AdaptMipLevels = ADAPTIVE_TONEMAPPER_SMALL_TEX_MIPLEVELS;
@@ -43,7 +43,7 @@ uniform float SceneBrightness <
     ui_min = 0.1;
     ui_max = 5.0;
     ui_step = 0.01;
-> = 1.0;
+> = 0.20;
 
 // Final Adjustments
 
@@ -94,7 +94,7 @@ uniform float Exposure <
     ui_min = -3.0;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 1.0;
+> = 0.75;
 
 // Bloom Settings
 uniform bool EnableBloom <
@@ -112,7 +112,7 @@ uniform float BloomIntensity <
     ui_min = 0.0;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 0.5;
+> = 1.00;
 
 uniform float BloomThreshold <
     ui_type = "slider";
@@ -196,7 +196,26 @@ uniform float BloomAdaptationReference <
     ui_min = 0.1;
     ui_max = 5.0;
     ui_step = 0.05;
-> = 1.2;
+> = 0.80;
+
+// Bloom Debug Views
+uniform int BloomDebugView <
+    ui_type = "combo";
+    ui_label = "Bloom Debug View";
+    ui_tooltip = "Shows different stages of the bloom pipeline.";
+    ui_category = "Bloom";
+    ui_items = "Off\0Bloom Prefilter (ThresholdTex)\0Bloom Layer 1 Output\0Bloom Layer 2 Output\0Bloom Layer 3 Output\0";
+> = 0;
+
+uniform float BloomDebugBrightness <
+    ui_type = "slider";
+    ui_label = "Bloom Debug Brightness";
+    ui_tooltip = "Multiplies the brightness of the bloom debug visualization.";
+    ui_category = "Bloom";
+    ui_min = 0.1;
+    ui_max = 10.0;
+    ui_step = 0.1;
+> = 1.0;
 
 // Tonemapper Settings
 
@@ -310,7 +329,7 @@ uniform float ShadowAdjustment <
     ui_min = 0.0;
     ui_max = 2.0;
     ui_step = 0.01;
-> = 1.0;
+> = 1.5;
 
 uniform float MidtoneAdjustment <
     ui_type = "slider";
@@ -417,7 +436,7 @@ uniform float LocalContrastStrength <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.05;
+> = 0.10;
 
 uniform float LocalContrastRadius <
     ui_type = "slider";
@@ -821,15 +840,35 @@ float3 GamutMap(float3 color) {
 
 // Pre-downsampling pass to prevent aliasing before blurring (Thresholding)
 float4 PS_BloomPrefilter(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target {
-    float4 color = tex2D(BackBuffer, texcoord);
+    // Use a more substantial pre-blurred source for all calculations
+    float2 ps = ReShade::PixelSize;
+    float4 preBlurredSource = 0.0;
+    float totalPreBlurWeight = 0.0;
     
-    // Convert to LAB space for perceptual brightness evaluation
-    float3 labColor = RGB2Lab(color.rgb);
+    // 3x3 Gaussian-like blur weights
+    float weights[9] = { 
+        1.0, 2.0, 1.0, 
+        2.0, 4.0, 2.0, 
+        1.0, 2.0, 1.0 
+    };
+
+    int k = 0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            preBlurredSource += tex2D(BackBuffer, texcoord + float2(x, y) * ps) * weights[k];
+            totalPreBlurWeight += weights[k];
+            k++;
+        }
+    }
+    preBlurredSource /= totalPreBlurWeight;
+
+    // Convert to LAB space for perceptual brightness evaluation using the pre-blurred source
+    float3 labColor = RGB2Lab(preBlurredSource.rgb);
     
     float brightness = labColor.x / 100.0; // L channel (0-100) normalized to 0-1
     
     // Apply threshold with soft knee
-    float knee = BloomThreshold * 0.25; // Slightly wider knee for softer thresholding
+    float knee = BloomThreshold * 0.25;
     float soft = saturate((brightness - BloomThreshold + knee) / (2.0 * knee + 0.00001));
     soft = soft * soft * (3.0 - 2.0 * soft); // Smoothstep
     
@@ -839,20 +878,16 @@ float4 PS_BloomPrefilter(float4 pos : SV_Position, float2 texcoord : TEXCOORD) :
     contribution *= BloomIntensity;
 
     // --- Adaptive Bloom based on scene adaptation ---    
-    if (EnableAdaptation && EnableAdaptiveBloom) // Only if main adaptation AND adaptive bloom are on
+    if (EnableAdaptation && EnableAdaptiveBloom) 
     {
         float adaptedLuminanceScene = tex2Dfetch(LastAdapt, int2(0,0), 0).x;
-        adaptedLuminanceScene = clamp(adaptedLuminanceScene, AdaptRange.x, AdaptRange.y); // Use same clamping as in MainPS
-
-        // Prevent division by zero or extremely small adaptedLuminanceScene values
+        adaptedLuminanceScene = clamp(adaptedLuminanceScene, AdaptRange.x, AdaptRange.y);
         adaptedLuminanceScene = max(adaptedLuminanceScene, 0.01);
-
         float bloomAdaptationFactor = pow(BloomAdaptationReference / adaptedLuminanceScene, AdaptiveBloomStrength);
         contribution *= bloomAdaptationFactor;
     }
     
     // Apply bloom value to LAB channels, emphasizing the L channel
-    // Tint is applied here so blurred colors are correct
     float3 brightBloomLab = float3(labColor.x * contribution * BloomTint.r, 
                                    labColor.y * contribution * BloomTint.g, 
                                    labColor.z * contribution * BloomTint.b);
@@ -860,24 +895,7 @@ float4 PS_BloomPrefilter(float4 pos : SV_Position, float2 texcoord : TEXCOORD) :
     // Convert back to RGB space
     float3 bloomColorRGB = Lab2RGB(brightBloomLab);
     
-    // A gentle pre-blur can help reduce aliasing on downsampled textures
-    float2 ps = ReShade::PixelSize;
-    float4 preBlurredSource = tex2D(BackBuffer, texcoord); // Sample original backbuffer for preblur source
-    float3 preBlurredLab = RGB2Lab(preBlurredSource.rgb);
-
-    // Apply similar contribution scaling and tint to the preBlurred part
-    // This ensures the preblur component also adapts if adaptive bloom is on
-    float preblurContribution = contribution; // Use the already adapted contribution
-    float3 preBlurredTintedLab = float3(preBlurredLab.x * preblurContribution * BloomTint.r,
-                                        preBlurredLab.y * preblurContribution * BloomTint.g,
-                                        preBlurredLab.z * preblurContribution * BloomTint.b);
-
-    // Blend the thresholded bloom color with a slightly pre-blurred version based on contribution
-    // This helps soften edges before they hit the main blur passes
-    float blendFactor = saturate(contribution * 2.0 / BloomIntensity); // Normalize blend factor against original intensity if needed
-                                                                     // to prevent overly aggressive blend when contribution is high due to adaptation
-    
-    return float4(lerp(Lab2RGB(preBlurredTintedLab), bloomColorRGB, blendFactor), 1.0);
+    return float4(bloomColorRGB, 1.0);
 }
 
 // Iterative Gaussian blur - Horizontal pass (inspired by PD80)
@@ -1181,7 +1199,7 @@ float4 PS_SaveLocalLuminance(float4 pos : SV_Position, float2 texcoord : TEXCOOR
     return tex2D(LocalLuminanceSampler, texcoord);
 }
 
-// Modified Main PS to incorporate bloom
+// Modified Main PS to incorporate bloom and its debug views
 float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
 {
     float4 color = tex2D(BackBuffer, texcoord);
@@ -1409,32 +1427,50 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     // Apply Final Gamma *after* tonemapping and gamut mapping
     color.rgb = ApplyGamma(color.rgb, Gamma);
     
-    // Show debug visualization if enabled (overwrites tonemapped result)
-    if (DebugMode > 0 && EnableMicroContrast) { // Ensure micro-contrast is enabled for its debug views
-        // The debugOutput is now calculated within the micro-contrast block in MainPS
-        // and needs to be returned if DebugMode is active.
-        // This part needs careful placement depending on where debugOutput is now sourced from.
-        // For now, assuming debugOutput is correctly populated before this check.
-        // return debugOutput; // This was previously here, ensure it is handled correctly if micro-contrast debug is still desired
-    }
-    
-    // --- Bloom Application --- (Applied after tonemapping and main adjustments, before final blend)
+    // --- Bloom Application --- (Applied after tonemapping and main adjustments)
+    float4 combinedBloom = 0.0; // Initialize to black
     if (EnableBloom) {
         // Sample the three bloom layers
         float4 bloom1 = tex2D(BloomLayer1Sampler, texcoord) * Bloom1Weight;
         float4 bloom2 = tex2D(BloomLayer2Sampler, texcoord) * Bloom2Weight;
         float4 bloom3 = tex2D(BloomLayer3Sampler, texcoord) * Bloom3Weight;
         
-        // Combine bloom layers using max to avoid over-saturation and get a more natural falloff
-        float4 combinedBloom = max(bloom1, max(bloom2, bloom3)); 
-        // No need to multiply by BloomIntensity again here, as it's now part of PS_BloomPrefilter
-        
-        // Additive blend in linear space (current color.rgb is linear at this point)
-        // The bloom color itself is already tinted and scaled by intensity in PS_BloomPrefilter
-        color.rgb += combinedBloom.rgb; 
+        combinedBloom = max(bloom1, max(bloom2, bloom3)); 
+        color.rgb += combinedBloom.rgb; // Additive blend
     }
 
-    // --- Final Blending --- (originalColor is pre-all-effects)
+    // --- Micro Contrast Debug View --- (Has its own separate DebugMode uniform)
+    if (DebugMode > 0 && EnableMicroContrast) { 
+        // Assuming debugOutput for micro-contrast is calculated within its block if DebugMode is active
+        // This needs to be correctly sourced if micro-contrast debug is desired.
+        // For now, this just illustrates placement relative to bloom debug.
+        // If micro-contrast debug is active, it might take precedence or be combined.
+        // For simplicity, let micro-contrast debug take precedence if its DebugMode > 0.
+        // float4 microContrastDebugOutput = getMicroContrastDebugOutput(); // Placeholder
+        // return microContrastDebugOutput; 
+    }
+
+    // --- Bloom Debug Views --- (Takes precedence over final output if active)
+    if (BloomDebugView > 0) {
+        float4 debugBloomColor = 0.0;
+        switch (BloomDebugView) {
+            case 1: // Bloom Prefilter (ThresholdTex)
+                debugBloomColor = tex2D(BloomThresholdSampler, texcoord);
+                break;
+            case 2: // Bloom Layer 1 Output
+                debugBloomColor = tex2D(BloomLayer1Sampler, texcoord);
+                break;
+            case 3: // Bloom Layer 2 Output
+                debugBloomColor = tex2D(BloomLayer2Sampler, texcoord);
+                break;
+            case 4: // Bloom Layer 3 Output
+                debugBloomColor = tex2D(BloomLayer3Sampler, texcoord);
+                break;
+        }
+        return float4(debugBloomColor.rgb * BloomDebugBrightness, 1.0);
+    }
+
+    // --- Final Blending with originalColor --- (If no debug views are active)
     float3 blendedColor;
     float3 processedColor = color.rgb; // Result after tonemapping, gamut, gamma, AND bloom
 
@@ -1457,7 +1493,7 @@ float4 MainPS(float4 pos : SV_POSITION, float2 texcoord : TEXCOORD) : SV_TARGET
     }
 
     // Apply white point scaling *after* blending
-    color.rgb = blendedColor * whitePoint; // whitePoint is defined earlier in MainPS (e.g., 1.2)
+    color.rgb = blendedColor * whitePoint; 
 
     return saturate(color); // Final saturation clamp
 }
