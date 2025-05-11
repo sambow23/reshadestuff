@@ -307,7 +307,7 @@ uniform float SkinToneProtection <
     ui_min = 0.0;
     ui_max = 1.0;
     ui_step = 0.01;
-> = 0.5;
+> = 0.0;
 
 uniform float VibranceCurve <
     ui_type = "slider";
